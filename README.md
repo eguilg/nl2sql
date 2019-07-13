@@ -1,10 +1,20 @@
+***** New July 13th, 2019 *****
+
+Code for competition based on the baseline of ZhuiYi.
+
+Added simple BERT-based model.
+## TODO
+1. 1 col N conds 问题 --对应W-num瓶颈
+2. value type 问题 (text/real)  --对应W-val瓶颈
+##
+
 ***** New June 21st, 2019 *****
 
 This branch aims to support Python3, which is developed under Python3.5 and PyTorch1.0.
 
 ATTENTION: To use this version of code, please download nl2sql_char_embedding_py3.zip to use, instead of nl2sql_char_embedding_baseline.zip.  
 
-***** New June 18st, 2019 *****
+***** New June 18th, 2019 *****
 
 This version of release supports execution accuracy, which gets the execution result of predicted SQL. This requires records==0.5.3 before running.
 
@@ -87,3 +97,4 @@ https://github.com/salesforce/WikiSQL
 https://yale-lily.github.io/spider
 
 <a href="https://arxiv.org/pdf/1804.08338.pdf">Semantic Parsing with Syntax- and Table-Aware SQL Generation</a>
+
