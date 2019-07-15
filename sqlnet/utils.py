@@ -5,6 +5,47 @@ from tqdm import tqdm
 from sqlnet.model.sqlbert import SQLBert
 import torch
 
+def pos_in_tokens(target_str, tokens):
+	max_len = 0
+	s, e = -1, -1
+	for i in range(len(tokens)):
+		if not target_str.startswith(tokens[i]):
+			continue
+		curlen = len(tokens[i])
+		if curlen > max_len:
+			max_len = curlen
+			s, e = i, i + 1
+		for j in range(i+1, len(tokens)):
+			if target_str[curlen:].startswith(tokens[j]):
+				curlen += len(tokens[j])
+				if curlen > max_len:
+					max_len = curlen
+					s, e = i, j + 1
+			else: break
+
+			if curlen >= len(target_str):
+				return i, j+1
+	return s, e
+
+#
+# def most_similar(s, slist):
+#     """从词表中找最相近的词（当无法全匹配的时候）
+#     """
+#     if len(slist) == 0:
+#         return s
+#     scores = [editdistance.eval(s, t) for t in slist]
+#     return slist[np.argmin(scores)]
+#
+#
+# def most_similar_2(w, s):
+#     """从句子s中找与w最相近的片段，
+#     借助分词工具和ngram的方式尽量精确地确定边界。
+#     """
+#     sw = jieba.lcut(s)
+#     sl = list(sw)
+#     sl.extend([''.join(i) for i in zip(sw, sw[1:])])
+#     sl.extend([''.join(i) for i in zip(sw, sw[1:], sw[2:])])
+#     return most_similar(w, sl)
 
 def load_data(sql_paths, table_paths, use_small=False):
 	if not isinstance(sql_paths, list):
@@ -60,6 +101,7 @@ def to_batch_seq(sql_data, table_data, idxes, st, ed, tokenizer=None, ret_vis_da
 	gt_cond_seq = []
 	vis_seq = []
 	sel_num_seq = []
+	header_type = []
 	for i in range(st, ed):
 		sql = sql_data[idxes[i]]
 		sel_num = len(sql['sql']['sel'])
@@ -87,6 +129,7 @@ def to_batch_seq(sql_data, table_data, idxes, st, ed, tokenizer=None, ret_vis_da
 			))
 		gt_cond_seq.append(sql['sql']['conds'])
 		vis_seq.append((sql['question'], table_data[sql['table_id']]['header']))
+		header_type.append(table_data[sql['table_id']]['types'])
 	# q_seq: char-based sequence of question
 	# gt_sel_num: number of selected columns and aggregation functions
 	# col_seq: char-based column name
@@ -94,9 +137,9 @@ def to_batch_seq(sql_data, table_data, idxes, st, ed, tokenizer=None, ret_vis_da
 	# ans_seq: (sel, number of conds, sel list in conds, op list in conds)
 	# gt_cond_seq: ground truth of conds
 	if ret_vis_data:
-		return q_seq, sel_num_seq, col_seq, col_num, ans_seq, gt_cond_seq, vis_seq
+		return q_seq, sel_num_seq, col_seq, col_num, ans_seq, gt_cond_seq, header_type, vis_seq
 	else:
-		return q_seq, sel_num_seq, col_seq, col_num, ans_seq, gt_cond_seq
+		return q_seq, sel_num_seq, col_seq, col_num, ans_seq, gt_cond_seq, header_type
 
 
 def pad_batch_seqs(seqs, pad=None, max_len=None):
@@ -113,7 +156,7 @@ def pad_batch_seqs(seqs, pad=None, max_len=None):
 	return seqs
 
 
-def gen_batch_bert_seq(tokenizer, q_seq, col_seq, max_len=200):
+def gen_batch_bert_seq(tokenizer, q_seq, col_seq, header_type, max_len=200):
 	input_seq = []  # 输入编号
 	q_mask = []  # NL mask
 	col_mask = []  # columns mask
@@ -128,7 +171,9 @@ def gen_batch_bert_seq(tokenizer, q_seq, col_seq, max_len=200):
 	for i in range(batch_size):
 		text_a = ['[CLS]'] + q_seq[i] + ['[SEP]']
 		text_b = []
-		for col in col_seq[i]:
+		for col_idx, col in enumerate(col_seq[i]):
+			type_token = '[unused1]' if header_type[i][col_idx] == 'text' else '[unused2]'
+			text_b.append(type_token)
 			text_b.extend(col)
 			text_b.append('[SEP]')
 
@@ -172,13 +217,13 @@ def to_batch_seq_test(sql_data, table_data, idxes, st, ed, tokenizer=None):
 	col_num = []
 	raw_seq = []
 	table_ids = []
+	header_type = []
 	for i in range(st, ed):
 		sql = sql_data[idxes[i]]
 
 		if tokenizer:
 			q = tokenizer.tokenize(sql['question'])
 			col = [tokenizer.tokenize(header) for header in table_data[sql['table_id']]['header']]
-
 		else:
 			q = [char for char in sql['question']]
 			col = [[char for char in header] for header in table_data[sql['table_id']]['header']]
@@ -187,7 +232,8 @@ def to_batch_seq_test(sql_data, table_data, idxes, st, ed, tokenizer=None):
 		col_num.append(len(table_data[sql['table_id']]['header']))
 		raw_seq.append(sql['question'])
 		table_ids.append(sql_data[idxes[i]]['table_id'])
-	return q_seq, col_seq, col_num, raw_seq, table_ids
+		header_type.append(table_data[sql['table_id']]['types'])
+	return q_seq, col_seq, col_num, raw_seq, table_ids, header_type
 
 
 def generate_gt_where_seq_test(q, gt_cond_seq):
@@ -213,30 +259,6 @@ def generate_gt_where_seq_test(q, gt_cond_seq):
 			record_cond.append(temp_ret_seq)
 		ret_seq.append(record_cond)
 	return ret_seq
-
-
-def pos_in_tokens(target_str, tokens):
-	max_len = 0
-	s, e = -1, -1
-	for i in range(len(tokens)):
-		if not target_str.startswith(tokens[i]):
-			continue
-		curlen = len(tokens[i])
-		if curlen > max_len:
-			max_len = curlen
-			s, e = i, i + 1
-		for j in range(i+1, len(tokens)):
-			if target_str[curlen:].startswith(tokens[j]):
-				curlen += len(tokens[j])
-				if curlen > max_len:
-					max_len = curlen
-					s, e = i, j + 1
-			else: break
-
-			if curlen >= len(target_str):
-				return i, j+1
-	return s, e
-
 
 
 def gen_bert_labels(q_seq, q_lens, col_nums, ans_seq, gt_cond_seq):
@@ -311,10 +333,10 @@ def epoch_train(model, optimizer, batch_size, sql_data, table_data, tokenizer=No
 		st = st * batch_size
 		if isinstance(model, SQLBert):
 			# bert training
-			q_seq, gt_sel_num, col_seq, col_num, ans_seq, gt_cond_seq = to_batch_seq(sql_data, table_data, perm, st, ed,
+			q_seq, gt_sel_num, col_seq, col_num, ans_seq, gt_cond_seq, header_type = to_batch_seq(sql_data, table_data, perm, st, ed,
 																					 tokenizer=tokenizer)
 
-			bert_inputs, q_lens, col_nums = gen_batch_bert_seq(tokenizer, q_seq, col_seq)
+			bert_inputs, q_lens, col_nums = gen_batch_bert_seq(tokenizer, q_seq, col_seq, header_type)
 			logits = model.forward(bert_inputs)  # condconn_logits, condop_logits, sel_agg_logits, q2col_logits
 
 			# gen label
@@ -324,7 +346,7 @@ def epoch_train(model, optimizer, batch_size, sql_data, table_data, tokenizer=No
 			loss = model.loss(logits, labels, q_lens, col_nums)
 		else:
 
-			q_seq, gt_sel_num, col_seq, col_num, ans_seq, gt_cond_seq = to_batch_seq(sql_data, table_data, perm, st, ed)
+			q_seq, gt_sel_num, col_seq, col_num, ans_seq, gt_cond_seq, header_type = to_batch_seq(sql_data, table_data, perm, st, ed)
 			# q_seq: char-based sequence of question
 			# gt_sel_num: number of selected columns and aggregation functions
 			# col_seq: char-based column name
@@ -359,12 +381,12 @@ def predict_test(model, batch_size, sql_data, table_data, output_path, tokenizer
 		st = st * batch_size
 		with torch.no_grad():
 			if isinstance(model, SQLBert):
-				q_seq, col_seq, col_num, raw_q_seq, table_ids = to_batch_seq_test(sql_data, table_data, perm, st, ed,
+				q_seq, col_seq, col_num, raw_q_seq, table_ids, header_type= to_batch_seq_test(sql_data, table_data, perm, st, ed,
 																				  tokenizer=tokenizer)
-				bert_inputs, q_lens, col_nums = gen_batch_bert_seq(tokenizer, q_seq, col_seq)
+				bert_inputs, q_lens, col_nums = gen_batch_bert_seq(tokenizer, q_seq, col_seq, header_type)
 				score = model.forward(bert_inputs, return_logits=False)
 			else:
-				q_seq, col_seq, col_num, raw_q_seq, table_ids = to_batch_seq_test(sql_data, table_data, perm, st, ed)
+				q_seq, col_seq, col_num, raw_q_seq, table_ids, header_type = to_batch_seq_test(sql_data, table_data, perm, st, ed)
 				score = model.forward(q_seq, col_seq, col_num)
 			sql_preds = model.gen_query(score, q_seq, col_seq, raw_q_seq)
 		for sql_pred in sql_preds:
@@ -385,7 +407,7 @@ def epoch_acc(model, batch_size, sql_data, table_data, db_path, tokenizer=None):
 		ed = (st + 1) * batch_size if (st + 1) * batch_size < len(perm) else len(perm)
 		st = st * batch_size
 
-		q_seq, gt_sel_num, col_seq, col_num, ans_seq, gt_cond_seq, raw_data = \
+		q_seq, gt_sel_num, col_seq, col_num, ans_seq, gt_cond_seq, header_type, raw_data = \
 			to_batch_seq(sql_data, table_data, perm, st, ed, tokenizer=tokenizer, ret_vis_data=True)
 		query_gt, table_ids = to_batch_query(sql_data, perm, st, ed)
 		# query_gt: ground truth of sql, data['sql'], containing sel, agg, conds:{sel, op, value}
@@ -394,7 +416,7 @@ def epoch_acc(model, batch_size, sql_data, table_data, db_path, tokenizer=None):
 		# try:
 		with torch.no_grad():
 			if isinstance(model, SQLBert):
-				bert_inputs, q_lens, col_nums = gen_batch_bert_seq(tokenizer, q_seq, col_seq)
+				bert_inputs, q_lens, col_nums = gen_batch_bert_seq(tokenizer, q_seq, col_seq, header_type)
 				score = model.forward(bert_inputs, return_logits=False)
 			else:
 				score = model.forward(q_seq, col_seq, col_num)

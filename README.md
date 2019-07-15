@@ -5,7 +5,28 @@ Code for competition based on the baseline of ZhuiYi.
 Added simple BERT-based model.
 ## TODO
 1. 1 col N conds 问题 --对应W-num瓶颈
+
+    multi_cond_count: 5217
+
+    multi_sql_count: 5127
 2. value type 问题 (text/real)  --对应W-val瓶颈
+
+     bad_cond_count: 12057
+     
+     bad_sql_count: 10027
+* 输入中每一列的开头加入column类别标志位
+
+    'text'->'['unused1']'
+    
+    'real'->'[unused2]'
+* Text Norm
+    1. 16年->2016 17年5月 2017年5月
+    2. 2万->20000 三百->300
+    3. XX股->XX股份
+    4. 一千万->1000  一百亿->100
+    5. 北上->北京 上海
+
+        
 ##
 
 ***** New June 21st, 2019 *****
