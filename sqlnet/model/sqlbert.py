@@ -147,8 +147,8 @@ class SQLBert(BertPreTrainedModel):
 		where_num_loss = F.cross_entropy(where_num_logit, where_num_label)
 		sel_agg_loss = F.cross_entropy(sel_agg_logit.transpose(1, 2), sel_agg_label, ignore_index=-1)
 		where_op_loss = F.cross_entropy(where_op_logit.transpose(1, 2), where_op_label, ignore_index=-1)
-		sel_col_loss = self.kl_loss(self.log_softmax(sel_col_logit), sel_col_label.float()) ** 2
-		where_col_loss = self.kl_loss(self.log_softmax(where_col_logit), where_col_label.float()) ** 2
+		sel_col_loss = torch.abs(self.kl_loss(self.log_softmax(sel_col_logit), sel_col_label.float()))
+		where_col_loss = torch.abs(self.kl_loss(self.log_softmax(where_col_logit), where_col_label.float()))
 		where_start_loss = F.cross_entropy(where_start_logit, where_start_label, ignore_index=-1)
 		where_end_loss = F.cross_entropy(where_end_logit, where_end_label, ignore_index=-1)
 

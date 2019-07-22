@@ -5,6 +5,7 @@ from tqdm import tqdm
 from sqlnet.model.sqlbert import SQLBert
 import torch
 
+
 def pos_in_tokens(target_str, tokens):
 	max_len = 0
 	s, e = -1, -1
