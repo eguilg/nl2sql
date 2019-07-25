@@ -5,28 +5,65 @@ from tqdm import tqdm
 from sqlnet.model.sqlbert import SQLBert
 import torch
 
-
+from fuzzywuzzy import fuzz
+from fuzzywuzzy import process
+import warnings
+warnings.filterwarnings('ignore')
 def pos_in_tokens(target_str, tokens):
-	max_len = 0
-	s, e = -1, -1
-	for i in range(len(tokens)):
-		if not target_str.startswith(tokens[i]):
-			continue
-		curlen = len(tokens[i])
-		if curlen > max_len:
-			max_len = curlen
-			s, e = i, i + 1
-		for j in range(i+1, len(tokens)):
-			if target_str[curlen:].startswith(tokens[j]):
-				curlen += len(tokens[j])
-				if curlen > max_len:
-					max_len = curlen
-					s, e = i, j + 1
-			else: break
+	if not tokens:
+		return 0,0
+	tlen = len(target_str)
+	ngrams = []
+	for l in range(tlen-10, tlen+5):
+		if l < 1: continue
+		ngrams.append(l)
 
-			if curlen >= len(target_str):
-				return i, j+1
-	return s, e
+	candidates = {}
+	for l in ngrams:
+		cur_idx = 0
+		while cur_idx <= len(tokens) - l:
+			cur_str = ""
+			st, ed = cur_idx, cur_idx
+			i = st
+			while i != len(tokens) and len(cur_str) < l:
+				cur_tok = tokens[i].replace("##", "").replace("[UKN]", "")
+				cur_str += cur_tok
+				i += 1
+				ed = i
+			candidates[cur_str] = (st, ed)
+			cur_idx += 1
+	results = process.extract(target_str, list(candidates.keys()), limit=10)
+	if not results:
+		return 0, 0
+	len_score = [1 - abs(len(x[0]) - len(target_str))/len(target_str) for x in results]
+	score = [results[i][1]*len_score[i] for i in range(len(results))]
+	chosen = results[np.argmax(score)][0]
+	# chosen, _ = process.extractOne(target_str, list(candidates.keys()))
+	# print("".join(tokens))
+	# print(chosen, target_str)
+	return candidates[chosen]
+
+# def pos_in_tokens(target_str, tokens):
+# 	max_len = 0
+# 	s, e = -1, -1
+# 	for i in range(len(tokens)):
+# 		if not target_str.startswith(tokens[i]):
+# 			continue
+# 		curlen = len(tokens[i])
+# 		if curlen > max_len:
+# 			max_len = curlen
+# 			s, e = i, i + 1
+# 		for j in range(i+1, len(tokens)):
+# 			if target_str[curlen:].startswith(tokens[j]):
+# 				curlen += len(tokens[j])
+# 				if curlen > max_len:
+# 					max_len = curlen
+# 					s, e = i, j + 1
+# 			else: break
+#
+# 			if curlen >= len(target_str):
+# 				return i, j+1
+# 	return s, e
 
 #
 # def most_similar(s, slist):
@@ -173,7 +210,12 @@ def gen_batch_bert_seq(tokenizer, q_seq, col_seq, header_type, max_len=200):
 		text_a = ['[CLS]'] + q_seq[i] + ['[SEP]']
 		text_b = []
 		for col_idx, col in enumerate(col_seq[i]):
-			type_token = '[unused1]' if header_type[i][col_idx] == 'text' else '[unused2]'
+			if header_type[i][col_idx] == 'text':
+				type_token = '[unused1]'
+			elif header_type[i][col_idx] == 'real':
+				type_token = '[unused2]'
+			else:
+				type_token = '[unused3]'
 			text_b.append(type_token)
 			text_b.extend(col)
 			text_b.append('[SEP]')
@@ -390,6 +432,7 @@ def predict_test(model, batch_size, sql_data, table_data, output_path, tokenizer
 				q_seq, col_seq, col_num, raw_q_seq, table_ids, header_type = to_batch_seq_test(sql_data, table_data, perm, st, ed)
 				score = model.forward(q_seq, col_seq, col_num)
 			sql_preds = model.gen_query(score, q_seq, col_seq, raw_q_seq)
+			sql_preds = post_process(sql_preds, sql_data, table_data, perm, st, ed)
 		for sql_pred in sql_preds:
 			sql_pred = eval(str(sql_pred))
 			fw.writelines(json.dumps(sql_pred, ensure_ascii=False) + '\n')
@@ -423,7 +466,9 @@ def epoch_acc(model, batch_size, sql_data, table_data, db_path, tokenizer=None):
 				score = model.forward(q_seq, col_seq, col_num)
 		# generate predicted format
 		pred_queries = model.gen_query(score, q_seq, col_seq, raw_q_seq)
+		pred_queries = post_process(pred_queries, sql_data, table_data, perm, st, ed)
 		one_err, tot_err = check_acc(raw_data, pred_queries, query_gt)
+
 		# except:
 		# 	badcase += 1
 		# 	print('badcase', badcase)
@@ -441,6 +486,28 @@ def epoch_acc(model, batch_size, sql_data, table_data, db_path, tokenizer=None):
 				ret_pred = None
 			ex_acc_num += (ret_gt == ret_pred)
 	return one_acc_num / len(sql_data), tot_acc_num / len(sql_data), ex_acc_num / len(sql_data)
+
+
+def post_process(pred, sql_data, table_data, perm, st, ed):
+	for i in range(st, ed):
+		sql = sql_data[perm[i]]
+		table = table_data[sql['table_id']]
+		for c in range(len(pred[i-st]['conds'])):
+			col_idx = pred[i-st]['conds'][c][0]
+			col_val = pred[i-st]['conds'][c][2]
+			if col_idx > len(table['header']) or col_val == "" or table['types'][col_idx] == 'real': continue
+			col_data = []
+			for r in table['rows']:
+				if col_idx < len(r):
+					col_data.append(r[col_idx])
+			if not col_data:
+				continue
+			match, score = process.extractOne(col_val, col_data)
+			if score < 20:
+				continue
+			# print(pred[i - st]['conds'][c][2], match)
+			pred[i-st]['conds'][c][2] = match
+	return pred
 
 
 def check_acc(vis_info, pred_queries, gt_queries):

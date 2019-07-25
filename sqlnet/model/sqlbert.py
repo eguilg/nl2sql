@@ -333,6 +333,7 @@ def merge_tokens(tok_list, raw_tok_str):
 	for raw_tok in tok_list:
 		if not raw_tok:
 			continue
+		raw_tok = raw_tok.replace("##", "").replace("[UNK]","")
 		tok = special.get(raw_tok, raw_tok)
 		if tok == '"':
 			double_quote_appear = 1 - double_quote_appear
