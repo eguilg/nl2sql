@@ -49,7 +49,8 @@ class SQLBert(BertPreTrainedModel):
 
 	def forward(self, inputs, return_logits=True):
 
-		input_seq, q_mask, col_mask, col_index, token_type_ids, attention_mask = self.transform_inputs(inputs)
+		input_seq, q_mask, sel_col_mask, sel_col_index, where_col_mask, \
+		where_col_index, col_end_index, token_type_ids, attention_mask = self.transform_inputs(inputs)
 		out_seq, pooled_output = self.bert(input_seq, token_type_ids, attention_mask, output_all_encoded_layers=False)
 
 		out_seq = self.dropout(out_seq)
@@ -57,38 +58,46 @@ class SQLBert(BertPreTrainedModel):
 		cls_emb = self.dropout(pooled_output)
 
 		max_qlen = q_mask.shape[-1]
-		max_col_num = col_mask.shape[-1]
+		max_col_num = sel_col_mask.shape[-1]
 
 		q_seq = out_seq[:, 1:1+max_qlen]
+		sel_col_seq = out_seq.gather(dim=1, index=sel_col_index.unsqueeze(-1).expand(-1, -1, out_seq.shape[-1]))
+		where_col_seq = out_seq.gather(dim=1, index=where_col_index.unsqueeze(-1).expand(-1, -1, out_seq.shape[-1]))
 
-		# 这里将每一列的token各自聚合, 得到(None, max_col_len, 768)的 col_seq
-		out_seq = out_seq.cumsum(dim=1)
-		col_index = col_index.unsqueeze(-1).expand(-1,-1, out_seq.shape[-1])
-		col_seq = out_seq.gather(dim=1, index=col_index[:, 0:1])  # 之前的和 (None, 1, 768)
-		for i in range(1, col_index.shape[1]):
-			next_sum = out_seq.gather(dim=1, index=col_index[:, i: i+1, :])  #  (None, 1, 768)
-			interval = (col_index[:, i: i+1] - col_index[:, i-1: i]).float().clamp(1.0)
-			col_seq[:, i-1: i, :] = (cls_raw.unsqueeze(1) + next_sum - col_seq[:, i-1: i, :]) / (interval + 1)
-			if i != col_index.shape[1] - 1:
-				col_seq = torch.cat([col_seq, next_sum], dim=1)
+		# B = out_seq.shape[0]
+		# out_seq = out_seq.cumsum(dim=1)
+		# col_end_index = col_end_index.unsqueeze(-1).expand(-1, -1, out_seq.shape[-1])
+		# col_ctx_seq = out_seq.gather(dim=1, index=col_end_index[:, 0:1])  # 之前的和 (None, 1, 768)
+		# for i in range(1, col_end_index.shape[1]):
+		# 	next_sum = out_seq.gather(dim=1, index=col_end_index[:, i: i+1, :])  #  (None, 1, 768)
+		# 	interval = (col_end_index[:, i: i+1] - col_end_index[:, i-1: i]).float().clamp(1.0)
+		# 	col_ctx_seq[:, i-1: i, :] = (cls_raw.unsqueeze(1) + next_sum - col_ctx_seq[:, i-1: i, :]) / (interval + 1)
+		# 	if i != col_end_index.shape[1] - 1:
+		# 		col_ctx_seq = torch.cat([col_ctx_seq, next_sum], dim=1)
+		#
+		# where_ctx_seq = col_ctx_seq.repeat(1, 1, 2).contiguous().view(B, col_ctx_seq.shape[1], self.bert_hidden_size, 2)
+		# where_ctx_seq = where_ctx_seq.permute(0, 3, 1, 2).contiguous().view(B, -1, self.bert_hidden_size)
+
+		# sel_col_seq = (sel_col_seq + col_ctx_seq) / 2
+		# where_col_seq = (where_col_seq + where_ctx_seq) / 2
 
 		where_conn_logit = self.W_w_conn(cls_emb)
 		sel_num_logit = self.W_s_num(cls_emb)
 		where_num_logit = self.W_w_num(cls_emb)
-		sel_col_logit = self.W_s_col(col_seq).squeeze(-1)
-		sel_agg_logit = self.W_s_agg(col_seq)
-		where_col_logit = self.W_w_col(col_seq).squeeze(-1)
-		where_op_logit = self.W_w_op(col_seq)
+		sel_col_logit = self.W_s_col(sel_col_seq).squeeze(-1)
+		sel_agg_logit = self.W_s_agg(sel_col_seq)
+		where_col_logit = self.W_w_col(where_col_seq).squeeze(-1)
+		where_op_logit = self.W_w_op(where_col_seq)
 
-		q_col_s = F.leaky_relu(self.W_q_s(q_seq).unsqueeze(2) + self.W_col_s(col_seq).unsqueeze(1)) # (None, q, col, 768)
-		q_col_e = F.leaky_relu(self.W_q_e(q_seq).unsqueeze(2) + self.W_col_e(col_seq).unsqueeze(1))  # (None, q, col, 768)
+		q_col_s = F.leaky_relu(self.W_q_s(q_seq).unsqueeze(2) + self.W_col_s(where_col_seq).unsqueeze(1)) # (None, q, 2col, 768)
+		q_col_e = F.leaky_relu(self.W_q_e(q_seq).unsqueeze(2) + self.W_col_e(where_col_seq).unsqueeze(1))  # (None, q, 2col, 768)
 		where_start_logit = self.W_w_s(q_col_s).squeeze(-1)
 		where_end_logit = self.W_w_e(q_col_e).squeeze(-1)
 
 		where_conn_logit2, \
 		sel_num_logit2, where_num_logit2, sel_col_logit2, \
 		sel_agg_logit2, where_col_logit2, where_op_logit2, \
-		where_start_logit2, where_end_logit2 = _get_logits(cls_emb, q_seq, col_seq, max_col_num)
+		where_start_logit2, where_end_logit2 = _get_logits(cls_emb, q_seq, sel_col_seq, where_col_seq, where_col_seq.shape[1])
 
 		where_conn_logit = (where_conn_logit + where_conn_logit2) / 2
 		sel_num_logit = (sel_num_logit + sel_num_logit2) / 2
@@ -100,6 +109,12 @@ class SQLBert(BertPreTrainedModel):
 		where_start_logit = (where_start_logit + where_start_logit2) / 2
 		where_end_logit = (where_end_logit + where_end_logit2) / 2
 
+		# where_conn_logit, \
+		# sel_num_logit, where_num_logit, sel_col_logit, \
+		# sel_agg_logit, where_col_logit, where_op_logit, \
+		# where_start_logit, where_end_logit = _get_logits(cls_emb, q_seq, sel_col_seq, where_col_seq,
+		# 												   where_col_seq.shape[1])
+
 
 		# 联合概率
 		# sel_agg_logit = sel_agg_logit + sel_col_logit[:, :, None]
@@ -109,14 +124,14 @@ class SQLBert(BertPreTrainedModel):
 
 
 		# 处理mask, 因为masked_fill要求fill的位置mask为1,保留的位置mask为0
-		q_mask, col_mask = q_mask.byte(), col_mask.byte()
-		qcol_mask = q_mask.unsqueeze(2) & col_mask.unsqueeze(1)
-		q_mask, col_mask, qcol_mask = ~q_mask, ~col_mask, ~qcol_mask
+		q_mask, sel_col_mask, where_col_mask = q_mask.byte(), sel_col_mask.byte(), where_col_mask.byte()
+		qcol_mask = q_mask.unsqueeze(2) & where_col_mask.unsqueeze(1)
+		q_mask, sel_col_mask, where_col_mask, qcol_mask = ~q_mask, ~sel_col_mask, ~where_col_mask, ~qcol_mask
 		# do mask
-		sel_col_logit = sel_col_logit.masked_fill(col_mask, -1e5)
-		sel_agg_logit = sel_agg_logit.masked_fill(col_mask.unsqueeze(-1).expand(-1, -1, 6), -1e5)
-		where_col_logit = where_col_logit.masked_fill(col_mask, -1e5)
-		where_op_logit = where_op_logit.masked_fill(col_mask.unsqueeze(-1).expand(-1, -1, 4), -1e5)
+		sel_col_logit = sel_col_logit.masked_fill(sel_col_mask, -1e5)
+		sel_agg_logit = sel_agg_logit.masked_fill(sel_col_mask.unsqueeze(-1).expand(-1, -1, 6), -1e5)
+		where_col_logit = where_col_logit.masked_fill(where_col_mask, -1e5)
+		where_op_logit = where_op_logit.masked_fill(where_col_mask.unsqueeze(-1).expand(-1, -1, 4), -1e5)
 		where_start_logit = where_start_logit.masked_fill(qcol_mask, -1e5)
 		where_end_logit = where_end_logit.masked_fill(qcol_mask, -1e5)
 
@@ -144,11 +159,12 @@ class SQLBert(BertPreTrainedModel):
 		# Evaluate the cond conn type
 		where_conn_loss = F.cross_entropy(where_conn_logit, where_conn_label)
 		sel_num_loss = F.cross_entropy(sel_num_logit, sel_num_label)
-		where_num_loss = F.cross_entropy(where_num_logit, where_num_label)
-		sel_agg_loss = F.cross_entropy(sel_agg_logit.transpose(1, 2), sel_agg_label, ignore_index=-1)
-		where_op_loss = F.cross_entropy(where_op_logit.transpose(1, 2), where_op_label, ignore_index=-1)
 		sel_col_loss = torch.abs(self.kl_loss(self.log_softmax(sel_col_logit), sel_col_label.float()))
+		sel_agg_loss = F.cross_entropy(sel_agg_logit.transpose(1, 2), sel_agg_label, ignore_index=-1)
+
+		where_num_loss = F.cross_entropy(where_num_logit, where_num_label)
 		where_col_loss = torch.abs(self.kl_loss(self.log_softmax(where_col_logit), where_col_label.float()))
+		where_op_loss = F.cross_entropy(where_op_logit.transpose(1, 2), where_op_label, ignore_index=-1)
 		where_start_loss = F.cross_entropy(where_start_logit, where_start_label, ignore_index=-1)
 		where_end_loss = F.cross_entropy(where_end_logit, where_end_label, ignore_index=-1)
 
@@ -208,8 +224,8 @@ class SQLBert(BertPreTrainedModel):
 		B = len(where_conn_logit)
 		for b in range(B):
 			cur_query = {}
-			sel_col_idxs = sel_col_sorted[b][: max(1,sel_num_pred[b])].tolist()
-			where_col_idxs = where_col_sorted[b][: max(1, where_num_pred[b])].tolist()
+			sel_col_idxs = sel_col_sorted[b][: max(1, sel_num_pred[b])].tolist()
+			# where_col_idxs = where_col_sorted[b][: max(1, where_num_pred[b])].tolist()
 			sel_col_agg = sel_agg_pred[b][sel_col_idxs].tolist()
 
 			cur_query['agg'] = sel_col_agg
@@ -217,15 +233,17 @@ class SQLBert(BertPreTrainedModel):
 			cur_query['sel'] = sel_col_idxs
 			cur_query['conds'] = []
 
-			for col_idx in where_col_idxs:
-				if col_idx >= len(col[b]):
-					break
+			while len(cur_query['conds']) < max(where_num_pred[b], 1):
+				col_idx = where_col_sorted[b][len(cur_query['conds'])]
+				true_idx = col_idx // 2
+				if true_idx >= len(col[b]):
+					continue
 				cond_op = where_op_pred[b][col_idx]
 				cond_start = where_start_pred[b][col_idx]
 				cond_end = where_end_pred[b][col_idx]
 				cons_toks = q[b][cond_start:cond_end + 1]
 				cond_str = merge_tokens(cons_toks, raw_q[b])
-				cur_query['conds'].append([col_idx, cond_op, cond_str])
+				cur_query['conds'].append([true_idx, cond_op, cond_str])
 
 			ret_queries.append(cur_query)
 
@@ -306,14 +324,14 @@ def _get_where_end_logit(q_seq, max_col_num):
 	return q_seq[:, :, 100:100 + max_col_num]
 
 
-def _get_logits(cls_emb, q_seq, col_seq, max_col_num):
+def _get_logits(cls_emb, q_seq, sel_col_seq, where_col_seq, max_col_num):
 	return _get_where_conn_logit(cls_emb),\
 		   _get_sel_num_logit(cls_emb), \
 		   _get_where_num_logit(cls_emb),\
-		   _get_sel_col_logit(col_seq), \
-		   _get_sel_agg_logit(col_seq), \
-		   _get_where_col_logit(col_seq),\
-		   _get_where_op_logit(col_seq),\
+		   _get_sel_col_logit(sel_col_seq), \
+		   _get_sel_agg_logit(sel_col_seq), \
+		   _get_where_col_logit(where_col_seq),\
+		   _get_where_op_logit(where_col_seq),\
 		   _get_where_start_logit(q_seq, max_col_num),\
 		   _get_where_end_logit(q_seq, max_col_num)
 

@@ -7,8 +7,24 @@ import torch
 
 from fuzzywuzzy import fuzz
 from fuzzywuzzy import process
+from fuzzywuzzy.utils import StringProcessor
 import warnings
 warnings.filterwarnings('ignore')
+
+
+def my_process(s):
+	"""Process string by
+		-- removing all but letters and numbers
+		-- trim whitespace
+		-- force to lower case
+		if force_ascii == True, force convert to ascii"""
+	# Force into lowercase.
+	string_out = StringProcessor.to_lower_case(s)
+	# Remove leading and trailing whitespaces.
+	string_out = StringProcessor.strip(string_out)
+	return string_out
+
+
 def pos_in_tokens(target_str, tokens):
 	if not tokens:
 		return 0,0
@@ -32,7 +48,7 @@ def pos_in_tokens(target_str, tokens):
 				ed = i
 			candidates[cur_str] = (st, ed)
 			cur_idx += 1
-	results = process.extract(target_str, list(candidates.keys()), limit=10)
+	results = process.extract(target_str, list(candidates.keys()), limit=10, processor=my_process)
 	if not results:
 		return 0, 0
 	len_score = [1 - abs(len(x[0]) - len(target_str))/len(target_str) for x in results]
@@ -194,38 +210,45 @@ def pad_batch_seqs(seqs, pad=None, max_len=None):
 	return seqs
 
 
-def gen_batch_bert_seq(tokenizer, q_seq, col_seq, header_type, max_len=200):
+def gen_batch_bert_seq(tokenizer, q_seq, col_seq, header_type, max_len=230):
 	input_seq = []  # 输入编号
 	q_mask = []  # NL mask
-	col_mask = []  # columns mask
-	col_index = [] # columns starting index
+	sel_col_mask = []  # columns mask
+	sel_col_index = []  # columns starting index
+	where_col_mask = []
+	where_col_index = []
 	token_type_ids = []  # sentence A/B
 	attention_mask = []  # length mask
 
+	col_end_index = []
+
 	q_lens = []
-	col_nums = []
+	sel_col_nums = []
+	where_col_nums = []
 
 	batch_size = len(q_seq)
 	for i in range(batch_size):
 		text_a = ['[CLS]'] + q_seq[i] + ['[SEP]']
 		text_b = []
 		for col_idx, col in enumerate(col_seq[i]):
-			if header_type[i][col_idx] == 'text':
-				type_token = '[unused1]'
-			elif header_type[i][col_idx] == 'real':
-				type_token = '[unused2]'
-			else:
-				type_token = '[unused3]'
-			text_b.append(type_token)
-			text_b.extend(col)
-			text_b.append('[SEP]')
+			new_col = []
+			new_col.append('[unused1]')  # 用作sel分类
+			new_col.append('[unused2]')  # 代表该列第一次作为条件
+			new_col.append('[unused3]')  # 代表该列第二次作为条件
 
-		overflow = len(text_a) + len(text_b) - max_len
-		if overflow > 0:
-			if overflow + 1 < len(text_a):
-				text_a = text_a[:len(text_a)-overflow-1] + ['[SEP]']
+			if header_type[i][col_idx] == 'text':
+				type_token = '[unused4]'
+			elif header_type[i][col_idx] == 'real':
+				type_token = '[unused5]'
 			else:
-				text_b = text_b[:len(text_b)-overflow-1] + ['[SEP]']
+				type_token = '[unused6]'
+			new_col.append(type_token)  # type特征
+			new_col.extend(col)
+			new_col.append('[SEP]')
+			if len(text_a) + len(text_b) + len(new_col) >= max_len:
+				break
+			text_b.extend(new_col)
+
 		inp_seq = text_a + text_b
 		input_seq.append(inp_seq)
 		q_mask.append([1]*(len(text_a) - 2))
@@ -233,25 +256,39 @@ def gen_batch_bert_seq(tokenizer, q_seq, col_seq, header_type, max_len=200):
 		token_type_ids.append([0]*len(text_a) + [1]*len(text_b))
 		attention_mask.append([1]*len(inp_seq))
 
-		col_idx = []
+		sel_col = []
+		where_col = []
+		col_ends = []
 		for i in range(len(text_a)-1, len(inp_seq)):
 			# if inp_seq[i] == '[CLS]':
 			# 	col_idx.append(i)
+			# if inp_seq[i] == '[SEP]':
+			if inp_seq[i] == '[unused2]' or inp_seq[i] == '[unused3]':
+				where_col.append(i)
+			if inp_seq[i] == '[unused1]':
+				sel_col.append(i)
 			if inp_seq[i] == '[SEP]':
-				col_idx.append(i)
-		col_mask.append([1]*(len(col_idx)-1))
-		col_nums.append((len(col_idx)-1))
-		col_index.append(col_idx)
+				col_ends.append(i)
+
+		sel_col_mask.append([1]*len(sel_col))
+		where_col_mask.append([1] * len(where_col))
+		sel_col_nums.append(len(sel_col))
+		where_col_nums.append(len(where_col))
+		sel_col_index.append(sel_col)
+		where_col_index.append(where_col)
+		col_end_index.append(col_ends)
 
 	input_seq = pad_batch_seqs(input_seq, '[PAD]')
 	input_seq = [tokenizer.convert_tokens_to_ids(sq) for sq in input_seq]
 	q_mask = pad_batch_seqs(q_mask)
-	col_mask = pad_batch_seqs(col_mask)
-	col_index = pad_batch_seqs(col_index)
+	sel_col_mask = pad_batch_seqs(sel_col_mask)
+	sel_col_index = pad_batch_seqs(sel_col_index)
+	where_col_mask = pad_batch_seqs(where_col_mask)
+	where_col_index = pad_batch_seqs(where_col_index)
 	token_type_ids = pad_batch_seqs(token_type_ids)
 	attention_mask = pad_batch_seqs(attention_mask)
-
-	return (input_seq, q_mask, col_mask, col_index, token_type_ids, attention_mask), q_lens, col_nums
+	col_end_index = pad_batch_seqs(col_end_index)
+	return (input_seq, q_mask, sel_col_mask, sel_col_index, where_col_mask, where_col_index, col_end_index, token_type_ids, attention_mask), q_lens, sel_col_nums, where_col_nums
 
 
 def to_batch_seq_test(sql_data, table_data, idxes, st, ed, tokenizer=None):
@@ -304,51 +341,66 @@ def generate_gt_where_seq_test(q, gt_cond_seq):
 	return ret_seq
 
 
-def gen_bert_labels(q_seq, q_lens, col_nums, ans_seq, gt_cond_seq):
+def gen_bert_labels(q_seq, q_lens, sel_col_nums, where_col_nums, ans_seq, gt_cond_seq):
 
 
 	q_max_len = max(q_lens)
-	col_max_len = max(col_nums)
+	sel_col_max_len = max(sel_col_nums)
+	where_col_max_len = max(where_col_nums)
 
 	# labels init
 	where_conn_label = np.array([x[6] for x in ans_seq])  # (None, )
 	sel_num_label = np.array([0 for _ in ans_seq])  # (None, )
 	where_num_label = np.array([0 for _ in ans_seq]) # (None, )
-	sel_col_label = np.array([[0] * col_max_len for _ in ans_seq], dtype=np.float)  # (None, col_max_len)
-	sel_agg_label = np.array([[-1] * col_max_len for _ in ans_seq])  # (None, col_max_len)
-	where_col_label = np.array([[0] * col_max_len for _ in ans_seq], dtype=np.float)  # (None, col_max_len)
-	where_op_label = np.array([[-1] * col_max_len for _ in ans_seq]) # (None, col_max_len)
+	sel_col_label = np.array([[0] * sel_col_max_len for _ in ans_seq], dtype=np.float)  # (None, col_max_len)
+	sel_agg_label = np.array([[-1] * sel_col_max_len for _ in ans_seq])  # (None, col_max_len)
+	where_col_label = np.array([[0] * where_col_max_len for _ in ans_seq], dtype=np.float)  # (None, col_max_len)
+	where_op_label = np.array([[-1] * where_col_max_len for _ in ans_seq]) # (None, col_max_len)
 
-	where_start_label = np.array([[-1] * col_max_len for _ in ans_seq])
-	where_end_label = np.array([[-1] * col_max_len for _ in ans_seq])
+	where_start_label = np.array([[-1] * where_col_max_len for _ in ans_seq])
+	where_end_label = np.array([[-1] * where_col_max_len for _ in ans_seq])
 
 	for b in range(len(gt_cond_seq)):
 		num_conds = len(gt_cond_seq[b])
 		if num_conds == 0:
-			where_col_label[b] = 1.0 / col_nums[b] # 分散
+			where_col_label[b] = 1.0 / sel_col_nums[b]  # 分散
 			mass = 0
 		else:
 			mass = 1 / num_conds
-
+		col_cond_count = {}
 		for cond in gt_cond_seq[b]:
-			if cond[0] >= col_nums[b]:
+			if cond[0] >= sel_col_nums[b]:
 				continue
+
 			s, e = pos_in_tokens(cond[2], q_seq[b])
 			if s >= 0:
+				if cond[0] in col_cond_count:
+					col_cond_count[cond[0]] += 1
+				else:
+					col_cond_count[cond[0]] = 0
+
+				col_idx = 2 * cond[0] + col_cond_count[cond[0]] % 2
 				s = min(s, q_lens[b] - 1)
 				e = min(e - 1, q_lens[b] - 1)
-				where_op_label[b][cond[0]] = cond[1]
-				where_col_label[b][cond[0]] += mass
-				where_start_label[b][cond[0]] = s
-				where_end_label[b][cond[0]] = e
+				where_op_label[b][col_idx] = cond[1]
+				where_col_label[b][col_idx] += mass
+				where_start_label[b][col_idx] = s
+				where_end_label[b][col_idx] = e
 		if num_conds > 0:
 			where_num_label[b] = (where_col_label[b] > 0).sum()
 
 		for b in range(len(ans_seq)):
-			sel = ans_seq[b][1]
-			agg = ans_seq[b][2]
+			_sel = ans_seq[b][1]
+			_agg = ans_seq[b][2]
+			sel, agg = [], []
+			for i in range(len(_sel)):
+				if _sel[i] < sel_col_nums[b]:
+					sel.append(_sel[i])
+					agg.append(_agg[i])
 			sel_num_label[b] = len(sel)
 			mass = 1 / sel_num_label[b]
+			if sel_num_label[b] == 0:
+				mass = 1 / sel_col_nums[b]
 			sel_col_label[b][sel] = mass
 			sel_agg_label[b][sel] = agg
 
@@ -379,14 +431,14 @@ def epoch_train(model, optimizer, batch_size, sql_data, table_data, tokenizer=No
 			q_seq, gt_sel_num, col_seq, col_num, ans_seq, gt_cond_seq, header_type = to_batch_seq(sql_data, table_data, perm, st, ed,
 																					 tokenizer=tokenizer)
 
-			bert_inputs, q_lens, col_nums = gen_batch_bert_seq(tokenizer, q_seq, col_seq, header_type)
+			bert_inputs, q_lens, sel_col_nums, where_col_nums = gen_batch_bert_seq(tokenizer, q_seq, col_seq, header_type)
 			logits = model.forward(bert_inputs)  # condconn_logits, condop_logits, sel_agg_logits, q2col_logits
 
 			# gen label
-			labels = gen_bert_labels(q_seq, q_lens, col_nums, ans_seq, gt_cond_seq)
+			labels = gen_bert_labels(q_seq, q_lens, sel_col_nums, where_col_nums, ans_seq, gt_cond_seq)
 
 			# compute loss
-			loss = model.loss(logits, labels, q_lens, col_nums)
+			loss = model.loss(logits, labels, q_lens, sel_col_nums)
 		else:
 
 			q_seq, gt_sel_num, col_seq, col_num, ans_seq, gt_cond_seq, header_type = to_batch_seq(sql_data, table_data, perm, st, ed)
@@ -424,9 +476,12 @@ def predict_test(model, batch_size, sql_data, table_data, output_path, tokenizer
 		st = st * batch_size
 		with torch.no_grad():
 			if isinstance(model, SQLBert):
-				q_seq, col_seq, col_num, raw_q_seq, table_ids, header_type= to_batch_seq_test(sql_data, table_data, perm, st, ed,
-																				  tokenizer=tokenizer)
-				bert_inputs, q_lens, col_nums = gen_batch_bert_seq(tokenizer, q_seq, col_seq, header_type)
+				q_seq, col_seq, col_num, raw_q_seq, table_ids, header_type = to_batch_seq_test(sql_data, table_data,
+																							   perm, st, ed,
+																							   tokenizer=tokenizer)
+
+				bert_inputs, q_lens, sel_col_nums, where_col_nums = gen_batch_bert_seq(tokenizer, q_seq, col_seq,
+																					   header_type)
 				score = model.forward(bert_inputs, return_logits=False)
 			else:
 				q_seq, col_seq, col_num, raw_q_seq, table_ids, header_type = to_batch_seq_test(sql_data, table_data, perm, st, ed)
@@ -460,7 +515,8 @@ def epoch_acc(model, batch_size, sql_data, table_data, db_path, tokenizer=None):
 		# try:
 		with torch.no_grad():
 			if isinstance(model, SQLBert):
-				bert_inputs, q_lens, col_nums = gen_batch_bert_seq(tokenizer, q_seq, col_seq, header_type)
+				bert_inputs, q_lens, sel_col_nums, where_col_nums = gen_batch_bert_seq(tokenizer, q_seq, col_seq,
+																					   header_type)
 				score = model.forward(bert_inputs, return_logits=False)
 			else:
 				score = model.forward(q_seq, col_seq, col_num)
@@ -502,8 +558,8 @@ def post_process(pred, sql_data, table_data, perm, st, ed):
 					col_data.append(r[col_idx])
 			if not col_data:
 				continue
-			match, score = process.extractOne(col_val, col_data)
-			if score < 20:
+			match, score = process.extractOne(col_val, col_data, processor=my_process)
+			if score < 10:
 				continue
 			# print(pred[i - st]['conds'][c][2], match)
 			pred[i-st]['conds'][c][2] = match
