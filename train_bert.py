@@ -2,6 +2,7 @@ import torch
 from sqlnet.utils import *
 from sqlnet.model.sqlbert import SQLBert, BertAdam, BertTokenizer
 from torch.optim import Adam
+from sqlnet.lookahead import Lookahead
 
 # import logging
 # logging.basicConfig(level = logging.INFO,format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -31,7 +32,7 @@ if __name__ == '__main__':
         use_small=False
         gpu=args.gpu
         batch_size=args.bs
-    learning_rate = 6e-6
+    learning_rate = 1e-5
 
     # load dataset
     train_sql, train_table, train_db, dev_sql, dev_table, dev_db = load_dataset(use_small=use_small)
@@ -46,8 +47,10 @@ if __name__ == '__main__':
 
     optimizer = BertAdam(model.parameters(), lr=learning_rate, schedule='warmup_cosine',
                          warmup=1.0/args.epoch, t_total=args.epoch * (len(train_sql) // batch_size + 1))
-    # optimizer = Adam(model.parameters(), lr=learning_rate)
 
+    # base_opt = BertAdam(model.parameters(), lr=learning_rate, schedule='warmup_cosine',
+    #                      warmup=1.0/args.epoch, t_total=args.epoch * (len(train_sql) // batch_size + 1))
+    # optimizer = Lookahead(base_opt, k=5, alpha=0.5) # Initialize Lookahead
 
 
     # used to record best score of each sub-task

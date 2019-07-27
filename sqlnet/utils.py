@@ -30,8 +30,7 @@ def pos_in_tokens(target_str, tokens):
 		return 0,0
 	tlen = len(target_str)
 	ngrams = []
-	for l in range(tlen-10, tlen+5):
-		if l < 1: continue
+	for l in range(max(1, tlen-10), tlen+5):
 		ngrams.append(l)
 
 	candidates = {}
@@ -48,58 +47,19 @@ def pos_in_tokens(target_str, tokens):
 				ed = i
 			candidates[cur_str] = (st, ed)
 			cur_idx += 1
-	results = process.extract(target_str, list(candidates.keys()), limit=10, processor=my_process)
+	results = process.extract(target_str, list(candidates.keys()), limit=5, processor=my_process)
 	if not results:
-		return 0, 0
+		return -1, -1
 	len_score = [1 - abs(len(x[0]) - len(target_str))/len(target_str) for x in results]
 	score = [results[i][1]*len_score[i] for i in range(len(results))]
-	chosen = results[np.argmax(score)][0]
+	chosen, cscore = results[np.argmax(score)]
 	# chosen, _ = process.extractOne(target_str, list(candidates.keys()))
 	# print("".join(tokens))
 	# print(chosen, target_str)
+	if cscore < 10:
+		return -1, -1
 	return candidates[chosen]
 
-# def pos_in_tokens(target_str, tokens):
-# 	max_len = 0
-# 	s, e = -1, -1
-# 	for i in range(len(tokens)):
-# 		if not target_str.startswith(tokens[i]):
-# 			continue
-# 		curlen = len(tokens[i])
-# 		if curlen > max_len:
-# 			max_len = curlen
-# 			s, e = i, i + 1
-# 		for j in range(i+1, len(tokens)):
-# 			if target_str[curlen:].startswith(tokens[j]):
-# 				curlen += len(tokens[j])
-# 				if curlen > max_len:
-# 					max_len = curlen
-# 					s, e = i, j + 1
-# 			else: break
-#
-# 			if curlen >= len(target_str):
-# 				return i, j+1
-# 	return s, e
-
-#
-# def most_similar(s, slist):
-#     """从词表中找最相近的词（当无法全匹配的时候）
-#     """
-#     if len(slist) == 0:
-#         return s
-#     scores = [editdistance.eval(s, t) for t in slist]
-#     return slist[np.argmin(scores)]
-#
-#
-# def most_similar_2(w, s):
-#     """从句子s中找与w最相近的片段，
-#     借助分词工具和ngram的方式尽量精确地确定边界。
-#     """
-#     sw = jieba.lcut(s)
-#     sl = list(sw)
-#     sl.extend([''.join(i) for i in zip(sw, sw[1:])])
-#     sl.extend([''.join(i) for i in zip(sw, sw[1:], sw[2:])])
-#     return most_similar(w, sl)
 
 def load_data(sql_paths, table_paths, use_small=False):
 	if not isinstance(sql_paths, list):
@@ -232,22 +192,29 @@ def gen_batch_bert_seq(tokenizer, q_seq, col_seq, header_type, max_len=230):
 		text_b = []
 		for col_idx, col in enumerate(col_seq[i]):
 			new_col = []
-			new_col.append('[unused1]')  # 用作sel分类
-			new_col.append('[unused2]')  # 代表该列第一次作为条件
-			new_col.append('[unused3]')  # 代表该列第二次作为条件
-
 			if header_type[i][col_idx] == 'text':
-				type_token = '[unused4]'
+				type_token1 = '[unused1]'
+				type_token2 = '[unused4]'
+				type_token3 = '[unused7]'
 			elif header_type[i][col_idx] == 'real':
-				type_token = '[unused5]'
+				type_token1 = '[unused2]'
+				type_token2 = '[unused5]'
+				type_token3 = '[unused8]'
 			else:
-				type_token = '[unused6]'
-			new_col.append(type_token)  # type特征
+				type_token1 = '[unused3]'
+				type_token2 = '[unused6]'
+				type_token3 = '[unused9]'
 			new_col.extend(col)
-			new_col.append('[SEP]')
+			new_col.append(type_token2)  # type特征 用来分类第一次作为条件
+			new_col.append(type_token3)  # type特征 用来分类第二次作为条件
+			#TODO: 可以再加入新的标签来支持更多的列
+			new_col.append(type_token1)  # type特征 用来分类sel, 同时分隔列名
+
 			if len(text_a) + len(text_b) + len(new_col) >= max_len:
 				break
 			text_b.extend(new_col)
+
+		text_b.append('[SEP]')
 
 		inp_seq = text_a + text_b
 		input_seq.append(inp_seq)
@@ -260,14 +227,10 @@ def gen_batch_bert_seq(tokenizer, q_seq, col_seq, header_type, max_len=230):
 		where_col = []
 		col_ends = []
 		for i in range(len(text_a)-1, len(inp_seq)):
-			# if inp_seq[i] == '[CLS]':
-			# 	col_idx.append(i)
-			# if inp_seq[i] == '[SEP]':
-			if inp_seq[i] == '[unused2]' or inp_seq[i] == '[unused3]':
+			if inp_seq[i] in ['[unused4]', '[unused5]', '[unused6]', '[unused7]', '[unused8]', '[unused9]']:
 				where_col.append(i)
-			if inp_seq[i] == '[unused1]':
+			if inp_seq[i] in ['[unused1]', '[unused2]', '[unused3]']:
 				sel_col.append(i)
-			if inp_seq[i] == '[SEP]':
 				col_ends.append(i)
 
 		sel_col_mask.append([1]*len(sel_col))
@@ -372,20 +335,21 @@ def gen_bert_labels(q_seq, q_lens, sel_col_nums, where_col_nums, ans_seq, gt_con
 			if cond[0] >= sel_col_nums[b]:
 				continue
 
+			if cond[0] in col_cond_count:
+				col_cond_count[cond[0]] += 1
+			else:
+				col_cond_count[cond[0]] = 0
+
+			col_idx = 2 * cond[0] + col_cond_count[cond[0]] % 2
+			where_op_label[b][col_idx] = cond[1]
+			where_col_label[b][col_idx] += mass
 			s, e = pos_in_tokens(cond[2], q_seq[b])
 			if s >= 0:
-				if cond[0] in col_cond_count:
-					col_cond_count[cond[0]] += 1
-				else:
-					col_cond_count[cond[0]] = 0
-
-				col_idx = 2 * cond[0] + col_cond_count[cond[0]] % 2
 				s = min(s, q_lens[b] - 1)
 				e = min(e - 1, q_lens[b] - 1)
-				where_op_label[b][col_idx] = cond[1]
-				where_col_label[b][col_idx] += mass
 				where_start_label[b][col_idx] = s
 				where_end_label[b][col_idx] = e
+
 		if num_conds > 0:
 			where_num_label[b] = (where_col_label[b] > 0).sum()
 
@@ -406,6 +370,7 @@ def gen_bert_labels(q_seq, q_lens, sel_col_nums, where_col_nums, ans_seq, gt_con
 
 	return where_conn_label, sel_num_label, where_num_label, sel_col_label, sel_agg_label, \
 		   where_col_label, where_op_label, where_start_label, where_end_label
+
 
 def to_batch_query(sql_data, idxes, st, ed):
 	query_gt = []
