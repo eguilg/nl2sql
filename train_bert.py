@@ -32,7 +32,7 @@ if __name__ == '__main__':
         use_small=False
         gpu=args.gpu
         batch_size=args.bs
-    learning_rate = 1e-5
+    learning_rate = 6e-6
 
     # load dataset
     train_sql, train_table, train_db, dev_sql, dev_table, dev_db = load_dataset(use_small=use_small)
