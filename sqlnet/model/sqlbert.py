@@ -135,12 +135,21 @@ class SQLBert(BertPreTrainedModel):
 		where_start_logit = where_start_logit.masked_fill(qcol_mask, -1e5)
 		where_end_logit = where_end_logit.masked_fill(qcol_mask, -1e5)
 
-		return  where_conn_logit, \
-				sel_num_logit, where_num_logit, sel_col_logit, \
-				sel_agg_logit, where_col_logit, where_op_logit, \
-				where_start_logit, where_end_logit
-
-
+		if return_logits:
+			return  where_conn_logit, \
+					sel_num_logit, where_num_logit, sel_col_logit, \
+					sel_agg_logit, where_col_logit, where_op_logit, \
+					where_start_logit, where_end_logit
+		else:
+			return F.softmax(where_conn_logit, dim=-1),\
+				   F.softmax(sel_num_logit, dim=-1), \
+				   F.softmax(where_num_logit, dim=-1), \
+				   F.softmax(sel_col_logit, dim=-1), \
+				   F.softmax(sel_agg_logit, dim=-1), \
+				   F.softmax(where_col_logit, dim=-1), \
+				   F.softmax(where_op_logit, dim=-1), \
+				   F.softmax(where_start_logit, dim=1), \
+		           F.softmax(where_end_logit, dim=1)
 
 	def loss(self, logits, labels, q_lens, col_nums):
 
@@ -182,71 +191,86 @@ class SQLBert(BertPreTrainedModel):
 			else:
 				yield torch.from_numpy(np.array(x))
 
-	def gen_query(self, logits, q, col, raw_q, reinforce=False, verbose=False):
-		"""
-		:param score:
-		:param q: token-questions
-		:param col: token-headers
-		:param raw_q: original question sequence
-		:return:
-		"""
-		where_conn_logit, \
-		sel_num_logit, where_num_logit, sel_col_logit, \
-		sel_agg_logit, where_col_logit, where_op_logit, \
-		where_start_logit, where_end_logit = logits
+	def gen_query(self, scores, q, col, sql_data, table_data, perm, st, ed, beam=False, k = 10):
 
-		where_conn_logit = where_conn_logit.data.cpu().numpy()
-		sel_num_logit = sel_num_logit.data.cpu().numpy()
-		where_num_logit = where_num_logit.data.cpu().numpy()
-		sel_col_logit = sel_col_logit.data.cpu().numpy()
-		sel_agg_logit = sel_agg_logit.data.cpu().numpy()
-		where_col_logit = where_col_logit.data.cpu().numpy()
-		where_op_logit = where_op_logit.data.cpu().numpy()
-		where_start_logit = where_start_logit.data.cpu().numpy()
-		where_end_logit = where_end_logit.data.cpu().numpy()
+		valid_s_agg = {
+			"real": frozenset([0, 1, 2, 3, 4, 5]),
+			"text": frozenset([0, 4])
+		}
+		valid_w_op = {
+			"real": frozenset([0, 1, 2, 3]),
+			"text": frozenset([2, 3])
+		}
 
-		where_conn_pred = where_conn_logit.argmax(-1)
-		sel_num_pred = sel_num_logit.argmax(-1)
-		where_num_pred = where_num_logit.argmax(-1)
-
-		sel_col_sorted = (-sel_col_logit).argsort(-1)
-		where_col_sorted = (-where_col_logit).argsort(-1)
-
-		# sel_col_sorted = (-sel_agg_logit.max(-1)).argsort(-1)
-		# where_col_sorted = (-where_end_logit.max(1)).argsort(-1)
-
-		sel_agg_pred = sel_agg_logit.argmax(-1)
-		where_op_pred = where_op_logit.argmax(-1)
-		where_start_pred = where_start_logit.argmax(1)
-		where_end_pred = where_end_logit.argmax(1)
+		where_conn_score, \
+		sel_num_score, where_num_score, sel_col_score, \
+		sel_agg_score, where_col_score, where_op_score, \
+		where_start_score, where_end_score = scores
 
 		ret_queries = []
-		B = len(where_conn_logit)
+		B = sel_num_score.shape[0]
+		col_vtypes = [table_data[sql_data[idx]['table_id']]['types'] for idx in perm[st:ed]]
+		raw_q = [sql_data[idx]['question'] for idx in perm[st:ed]]
+		where_conn_pred = where_conn_score.argmax(-1).data.cpu().numpy()
+
+		## filtering sel col and agg
+		sel_x_agg_score = (sel_col_score[:, :, None] * sel_agg_score).view(B, -1)
+		sel_x_agg_value = np.array([[c_idx, agg] for c_idx in range(0, sel_col_score.shape[1]) for agg in range(0, 6)])
+		sel_x_agg_idx = sel_x_agg_score.argsort(dim=-1, descending=True).data.cpu().numpy()
+		sel_num_pred = sel_num_score.argmax(-1).data.cpu().numpy()
+		where_x_op_score = (where_col_score[:, :, None] * where_op_score).view(B, -1)
+		where_x_op_value = np.array([[c_idx, op] for c_idx in range(0, where_col_score.shape[1]) for op in range(0, 4)])
+		where_x_op_idx = where_x_op_score.argsort(dim=-1, descending=True).data.cpu().numpy()
+		where_num_pred = where_num_score.argmax(-1).data.cpu().numpy()
+
+		where_start_pred = where_start_score.argmax(1).data.cpu().numpy()
+		where_end_pred = where_end_score.argmax(1).data.cpu().numpy()
+
+
 		for b in range(B):
 			cur_query = {}
-			sel_col_idxs = sel_col_sorted[b][: max(1, sel_num_pred[b])].tolist()
-			# where_col_idxs = where_col_sorted[b][: max(1, where_num_pred[b])].tolist()
-			sel_col_agg = sel_agg_pred[b][sel_col_idxs].tolist()
+			types = col_vtypes[b]
 
-			cur_query['agg'] = sel_col_agg
+			sel_num = max(1, sel_num_pred[b])
+			sel_idx_sorted = sel_x_agg_idx[b]
+
 			cur_query['cond_conn_op'] = where_conn_pred[b]
-			cur_query['sel'] = sel_col_idxs
-			cur_query['conds'] = []
+			cur_query['agg'], cur_query['sel'],  = [], []
+			for idx in sel_idx_sorted:
+				if len(cur_query['sel']) == sel_num:
+					break
+				sel_col_idx, agg = sel_x_agg_value[idx]
+				if sel_col_idx < len(col[b]):
+					sel_col_type = types[sel_col_idx]
+					if beam and (agg not in valid_s_agg[sel_col_type]):
+						continue
+					cur_query['agg'].append(agg)
+					cur_query['sel'].append(sel_col_idx)
 
-			while len(cur_query['conds']) < max(where_num_pred[b], 1):
-				col_idx = where_col_sorted[b][len(cur_query['conds'])]
-				true_idx = col_idx // 2
-				if true_idx >= len(col[b]):
-					continue
-				cond_op = where_op_pred[b][col_idx]
-				cond_start = where_start_pred[b][col_idx]
-				cond_end = where_end_pred[b][col_idx]
-				cons_toks = q[b][cond_start:cond_end + 1]
-				cond_str = merge_tokens(cons_toks, raw_q[b])
-				cur_query['conds'].append([true_idx, cond_op, cond_str])
+			where_num = max(1, where_num_pred[b])
+			where_idx_sorted = where_x_op_idx[b]
+			# cond_candis = []
+			cur_query['conds'] = []
+			for idx in where_idx_sorted:
+				if len(cur_query['conds']) >= where_num:
+					break
+				w_col_idx, op = where_x_op_value[idx]
+
+				true_col_idx = w_col_idx // 2  # 每列预测两个条件
+
+				if true_col_idx < len(col[b]):
+					where_col_type = types[true_col_idx]
+					if beam and (op not in valid_w_op[where_col_type]):
+						continue
+					cond_start = where_start_pred[b][w_col_idx]
+					cond_end = where_end_pred[b][w_col_idx]
+					cons_toks = q[b][cond_start:cond_end + 1]
+					cond_str = merge_tokens(cons_toks, raw_q[b])
+
+					cur_query['conds'].append([true_col_idx, op, cond_str])
+
 
 			ret_queries.append(cur_query)
-
 		return ret_queries
 
 """

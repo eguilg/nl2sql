@@ -448,10 +448,11 @@ def predict_test(model, batch_size, sql_data, table_data, output_path, tokenizer
 				bert_inputs, q_lens, sel_col_nums, where_col_nums = gen_batch_bert_seq(tokenizer, q_seq, col_seq,
 																					   header_type)
 				score = model.forward(bert_inputs, return_logits=False)
+				sql_preds = model.gen_query(score, q_seq, col_seq, sql_data, table_data, perm, st, ed)
 			else:
 				q_seq, col_seq, col_num, raw_q_seq, table_ids, header_type = to_batch_seq_test(sql_data, table_data, perm, st, ed)
 				score = model.forward(q_seq, col_seq, col_num)
-			sql_preds = model.gen_query(score, q_seq, col_seq, raw_q_seq)
+				sql_preds = model.gen_query(score, q_seq, col_seq, raw_q_seq)
 			sql_preds = post_process(sql_preds, sql_data, table_data, perm, st, ed)
 		for sql_pred in sql_preds:
 			sql_pred = eval(str(sql_pred))
@@ -483,10 +484,13 @@ def epoch_acc(model, batch_size, sql_data, table_data, db_path, tokenizer=None):
 				bert_inputs, q_lens, sel_col_nums, where_col_nums = gen_batch_bert_seq(tokenizer, q_seq, col_seq,
 																					   header_type)
 				score = model.forward(bert_inputs, return_logits=False)
+				pred_queries = model.gen_query(score, q_seq, col_seq, sql_data, table_data, perm, st, ed)
 			else:
 				score = model.forward(q_seq, col_seq, col_num)
-		# generate predicted format
-		pred_queries = model.gen_query(score, q_seq, col_seq, raw_q_seq)
+				# generate predicted format
+				pred_queries = model.gen_query(score, q_seq, col_seq, raw_q_seq)
+
+
 		pred_queries = post_process(pred_queries, sql_data, table_data, perm, st, ed)
 		one_err, tot_err = check_acc(raw_data, pred_queries, query_gt)
 
