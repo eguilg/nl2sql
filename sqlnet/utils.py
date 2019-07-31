@@ -4,12 +4,19 @@ import numpy as np
 from tqdm import tqdm
 from sqlnet.model.sqlbert import SQLBert
 import torch
-
+from sqlnet.strPreprocess import strPreProcess
 from fuzzywuzzy import fuzz
 from fuzzywuzzy import process
 from fuzzywuzzy.utils import StringProcessor
 import warnings
 warnings.filterwarnings('ignore')
+
+from functools import lru_cache
+
+
+@lru_cache(None)
+def my_scorer(t, c):
+	return (1 - abs(len(t) - len(c))/max(len(t), len(c))) * process.default_scorer(t, c)
 
 
 def my_process(s):
@@ -27,7 +34,7 @@ def my_process(s):
 
 def pos_in_tokens(target_str, tokens):
 	if not tokens:
-		return 0,0
+		return -1, -1
 	tlen = len(target_str)
 	ngrams = []
 	for l in range(max(1, tlen-10), tlen+5):
@@ -47,16 +54,17 @@ def pos_in_tokens(target_str, tokens):
 				ed = i
 			candidates[cur_str] = (st, ed)
 			cur_idx += 1
-	results = process.extract(target_str, list(candidates.keys()), limit=5, processor=my_process)
+	results = process.extract(target_str, list(candidates.keys()), limit=10, processor=my_process, scorer=my_scorer)
 	if not results:
 		return -1, -1
-	len_score = [1 - abs(len(x[0]) - len(target_str))/len(target_str) for x in results]
-	score = [results[i][1]*len_score[i] for i in range(len(results))]
-	chosen, cscore = results[np.argmax(score)]
+	# len_score = [1 - abs(len(x[0]) - len(target_str))/max(len(target_str), len(x[0]))for x in results]
+	# score = [results[i][1]*len_score[i] for i in range(len(results))]
+	chosen, cscore = results[0]
+	# print(target_str, results)
 	# chosen, _ = process.extractOne(target_str, list(candidates.keys()))
 	# print("".join(tokens))
 	# print(chosen, target_str)
-	if cscore < 10:
+	if cscore <= 5:
 		return -1, -1
 	return candidates[chosen]
 
@@ -121,8 +129,9 @@ def to_batch_seq(sql_data, table_data, idxes, st, ed, tokenizer=None, ret_vis_da
 		sel_num = len(sql['sql']['sel'])
 		sel_num_seq.append(sel_num)
 		conds_num = len(sql['sql']['conds'])
+
 		if tokenizer:
-			q = tokenizer.tokenize(sql['question'])
+			q = tokenizer.tokenize(strPreProcess(sql['question']))
 			col = [tokenizer.tokenize(header) for header in table_data[sql['table_id']]['header']]
 
 		else:
@@ -265,7 +274,7 @@ def to_batch_seq_test(sql_data, table_data, idxes, st, ed, tokenizer=None):
 		sql = sql_data[idxes[i]]
 
 		if tokenizer:
-			q = tokenizer.tokenize(sql['question'])
+			q = tokenizer.tokenize(strPreProcess(sql['question']))
 			col = [tokenizer.tokenize(header) for header in table_data[sql['table_id']]['header']]
 		else:
 			q = [char for char in sql['question']]
@@ -520,7 +529,8 @@ def post_process(pred, sql_data, table_data, perm, st, ed):
 		for c in range(len(pred[i-st]['conds'])):
 			col_idx = pred[i-st]['conds'][c][0]
 			col_val = pred[i-st]['conds'][c][2]
-			if col_idx > len(table['header']) or col_val == "" or table['types'][col_idx] == 'real': continue
+			if col_idx > len(table['header']) or col_val == "" or table['types'][col_idx] == 'real':
+				continue
 			col_data = []
 			for r in table['rows']:
 				if col_idx < len(r):
@@ -528,9 +538,8 @@ def post_process(pred, sql_data, table_data, perm, st, ed):
 			if not col_data:
 				continue
 			match, score = process.extractOne(col_val, col_data, processor=my_process)
-			if score < 10:
+			if score == 0:
 				continue
-			# print(pred[i - st]['conds'][c][2], match)
 			pred[i-st]['conds'][c][2] = match
 	return pred
 

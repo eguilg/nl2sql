@@ -381,17 +381,17 @@ def merge_tokens(tok_list, raw_tok_str):
 			double_quote_appear = 1 - double_quote_appear
 		if len(ret) == 0:
 			pass
-		elif len(ret) > 0 and ret + ' ' + tok in tok_str:
-			ret = ret + ' '
+		# elif len(ret) > 0 and ret + ' ' + tok in tok_str:
+		# 	ret = ret + ' '
 		elif len(ret) > 0 and ret + tok in tok_str:
 			pass
-		elif tok == '"':
-			if double_quote_appear:
-				ret = ret + ' '
+		# elif tok == '"':
+		# 	if double_quote_appear:
+		# 		ret = ret + ' '
 		# elif tok[0] not in alphabet:
 		#     pass
-		elif (ret[-1] not in ['(', '/', u'\u2013', '#', '$', '&']) \
-				and (ret[-1] != '"' or not double_quote_appear):
-			ret = ret + ' '
+		# elif (ret[-1] not in ['(', '/', u'\u2013', '#', '$', '&']) \
+		# 		and (ret[-1] != '"' or not double_quote_appear):
+			# ret = ret + ' '
 		ret = ret + tok
 	return ret.strip()
