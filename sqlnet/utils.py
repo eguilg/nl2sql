@@ -5,18 +5,16 @@ from tqdm import tqdm
 from sqlnet.model.sqlbert import SQLBert
 import torch
 from sqlnet.strPreprocess import strPreProcess
-from fuzzywuzzy import fuzz
 from fuzzywuzzy import process
 from fuzzywuzzy.utils import StringProcessor
-import warnings
-warnings.filterwarnings('ignore')
+import copy
 
 from functools import lru_cache
 
 
 @lru_cache(None)
 def my_scorer(t, c):
-	return (1 - abs(len(t) - len(c))/max(len(t), len(c))) * process.default_scorer(t, c)
+	return (1 - abs(len(t) - len(c)) / max(len(t), len(c))) * process.default_scorer(t, c)
 
 
 def my_process(s):
@@ -37,7 +35,7 @@ def pos_in_tokens(target_str, tokens):
 		return -1, -1
 	tlen = len(target_str)
 	ngrams = []
-	for l in range(max(1, tlen-10), tlen+5):
+	for l in range(max(1, tlen - 10), tlen + 5):
 		ngrams.append(l)
 
 	candidates = {}
@@ -57,13 +55,7 @@ def pos_in_tokens(target_str, tokens):
 	results = process.extract(target_str, list(candidates.keys()), limit=10, processor=my_process, scorer=my_scorer)
 	if not results:
 		return -1, -1
-	# len_score = [1 - abs(len(x[0]) - len(target_str))/max(len(target_str), len(x[0]))for x in results]
-	# score = [results[i][1]*len_score[i] for i in range(len(results))]
 	chosen, cscore = results[0]
-	# print(target_str, results)
-	# chosen, _ = process.extractOne(target_str, list(candidates.keys()))
-	# print("".join(tokens))
-	# print(chosen, target_str)
 	if cscore <= 5:
 		return -1, -1
 	return candidates[chosen]
@@ -216,7 +208,7 @@ def gen_batch_bert_seq(tokenizer, q_seq, col_seq, header_type, max_len=230):
 			new_col.extend(col)
 			new_col.append(type_token2)  # type特征 用来分类第一次作为条件
 			new_col.append(type_token3)  # type特征 用来分类第二次作为条件
-			#TODO: 可以再加入新的标签来支持更多的列
+			# TODO: 可以再加入新的标签来支持更多的列
 			new_col.append(type_token1)  # type特征 用来分类sel, 同时分隔列名
 
 			if len(text_a) + len(text_b) + len(new_col) >= max_len:
@@ -227,22 +219,22 @@ def gen_batch_bert_seq(tokenizer, q_seq, col_seq, header_type, max_len=230):
 
 		inp_seq = text_a + text_b
 		input_seq.append(inp_seq)
-		q_mask.append([1]*(len(text_a) - 2))
+		q_mask.append([1] * (len(text_a) - 2))
 		q_lens.append(len(text_a) - 2)
-		token_type_ids.append([0]*len(text_a) + [1]*len(text_b))
-		attention_mask.append([1]*len(inp_seq))
+		token_type_ids.append([0] * len(text_a) + [1] * len(text_b))
+		attention_mask.append([1] * len(inp_seq))
 
 		sel_col = []
 		where_col = []
 		col_ends = []
-		for i in range(len(text_a)-1, len(inp_seq)):
+		for i in range(len(text_a) - 1, len(inp_seq)):
 			if inp_seq[i] in ['[unused4]', '[unused5]', '[unused6]', '[unused7]', '[unused8]', '[unused9]']:
 				where_col.append(i)
 			if inp_seq[i] in ['[unused1]', '[unused2]', '[unused3]']:
 				sel_col.append(i)
 				col_ends.append(i)
 
-		sel_col_mask.append([1]*len(sel_col))
+		sel_col_mask.append([1] * len(sel_col))
 		where_col_mask.append([1] * len(where_col))
 		sel_col_nums.append(len(sel_col))
 		where_col_nums.append(len(where_col))
@@ -260,7 +252,8 @@ def gen_batch_bert_seq(tokenizer, q_seq, col_seq, header_type, max_len=230):
 	token_type_ids = pad_batch_seqs(token_type_ids)
 	attention_mask = pad_batch_seqs(attention_mask)
 	col_end_index = pad_batch_seqs(col_end_index)
-	return (input_seq, q_mask, sel_col_mask, sel_col_index, where_col_mask, where_col_index, col_end_index, token_type_ids, attention_mask), q_lens, sel_col_nums, where_col_nums
+	return (input_seq, q_mask, sel_col_mask, sel_col_index, where_col_mask, where_col_index, col_end_index,
+			token_type_ids, attention_mask), q_lens, sel_col_nums, where_col_nums
 
 
 def to_batch_seq_test(sql_data, table_data, idxes, st, ed, tokenizer=None):
@@ -314,8 +307,6 @@ def generate_gt_where_seq_test(q, gt_cond_seq):
 
 
 def gen_bert_labels(q_seq, q_lens, sel_col_nums, where_col_nums, ans_seq, gt_cond_seq):
-
-
 	q_max_len = max(q_lens)
 	sel_col_max_len = max(sel_col_nums)
 	where_col_max_len = max(where_col_nums)
@@ -323,11 +314,11 @@ def gen_bert_labels(q_seq, q_lens, sel_col_nums, where_col_nums, ans_seq, gt_con
 	# labels init
 	where_conn_label = np.array([x[6] for x in ans_seq])  # (None, )
 	sel_num_label = np.array([0 for _ in ans_seq])  # (None, )
-	where_num_label = np.array([0 for _ in ans_seq]) # (None, )
+	where_num_label = np.array([0 for _ in ans_seq])  # (None, )
 	sel_col_label = np.array([[0] * sel_col_max_len for _ in ans_seq], dtype=np.float)  # (None, col_max_len)
 	sel_agg_label = np.array([[-1] * sel_col_max_len for _ in ans_seq])  # (None, col_max_len)
 	where_col_label = np.array([[0] * where_col_max_len for _ in ans_seq], dtype=np.float)  # (None, col_max_len)
-	where_op_label = np.array([[-1] * where_col_max_len for _ in ans_seq]) # (None, col_max_len)
+	where_op_label = np.array([[-1] * where_col_max_len for _ in ans_seq])  # (None, col_max_len)
 
 	where_start_label = np.array([[-1] * where_col_max_len for _ in ans_seq])
 	where_end_label = np.array([[-1] * where_col_max_len for _ in ans_seq])
@@ -402,10 +393,12 @@ def epoch_train(model, optimizer, batch_size, sql_data, table_data, tokenizer=No
 		st = st * batch_size
 		if isinstance(model, SQLBert):
 			# bert training
-			q_seq, gt_sel_num, col_seq, col_num, ans_seq, gt_cond_seq, header_type = to_batch_seq(sql_data, table_data, perm, st, ed,
-																					 tokenizer=tokenizer)
+			q_seq, gt_sel_num, col_seq, col_num, ans_seq, gt_cond_seq, header_type = to_batch_seq(sql_data, table_data,
+																								  perm, st, ed,
+																								  tokenizer=tokenizer)
 
-			bert_inputs, q_lens, sel_col_nums, where_col_nums = gen_batch_bert_seq(tokenizer, q_seq, col_seq, header_type)
+			bert_inputs, q_lens, sel_col_nums, where_col_nums = gen_batch_bert_seq(tokenizer, q_seq, col_seq,
+																				   header_type)
 			logits = model.forward(bert_inputs)  # condconn_logits, condop_logits, sel_agg_logits, q2col_logits
 
 			# gen label
@@ -415,7 +408,8 @@ def epoch_train(model, optimizer, batch_size, sql_data, table_data, tokenizer=No
 			loss = model.loss(logits, labels, q_lens, sel_col_nums)
 		else:
 
-			q_seq, gt_sel_num, col_seq, col_num, ans_seq, gt_cond_seq, header_type = to_batch_seq(sql_data, table_data, perm, st, ed)
+			q_seq, gt_sel_num, col_seq, col_num, ans_seq, gt_cond_seq, header_type = to_batch_seq(sql_data, table_data,
+																								  perm, st, ed)
 			# q_seq: char-based sequence of question
 			# gt_sel_num: number of selected columns and aggregation functions
 			# col_seq: char-based column name
@@ -424,7 +418,8 @@ def epoch_train(model, optimizer, batch_size, sql_data, table_data, tokenizer=No
 			# gt_cond_seq: ground truth of conds
 			gt_where_seq = generate_gt_where_seq_test(q_seq, gt_cond_seq)
 			gt_sel_seq = [x[1] for x in ans_seq]
-			score = model.forward(q_seq, col_seq, col_num, gt_where=gt_where_seq, gt_cond=gt_cond_seq, gt_sel=gt_sel_seq,
+			score = model.forward(q_seq, col_seq, col_num, gt_where=gt_where_seq, gt_cond=gt_cond_seq,
+								  gt_sel=gt_sel_seq,
 								  gt_sel_num=gt_sel_num)
 			# sel_num_score, sel_col_score, sel_agg_score, cond_score, cond_rela_score
 
@@ -436,7 +431,6 @@ def epoch_train(model, optimizer, batch_size, sql_data, table_data, tokenizer=No
 		optimizer.step()
 		cum_loss += loss.data.cpu().numpy() * (ed - st)
 	return cum_loss / len(sql_data)
-
 
 
 def predict_test(model, batch_size, sql_data, table_data, output_path, tokenizer=None):
@@ -459,16 +453,16 @@ def predict_test(model, batch_size, sql_data, table_data, output_path, tokenizer
 				score = model.forward(bert_inputs, return_logits=False)
 				sql_preds = model.gen_query(score, q_seq, col_seq, sql_data, table_data, perm, st, ed)
 			else:
-				q_seq, col_seq, col_num, raw_q_seq, table_ids, header_type = to_batch_seq_test(sql_data, table_data, perm, st, ed)
+				q_seq, col_seq, col_num, raw_q_seq, table_ids, header_type = to_batch_seq_test(sql_data, table_data,
+																							   perm, st, ed)
 				score = model.forward(q_seq, col_seq, col_num)
 				sql_preds = model.gen_query(score, q_seq, col_seq, raw_q_seq)
 			sql_preds = post_process(sql_preds, sql_data, table_data, perm, st, ed)
 		for sql_pred in sql_preds:
 			sql_pred = eval(str(sql_pred))
 			fw.writelines(json.dumps(sql_pred, ensure_ascii=False) + '\n')
-			# fw.writelines(json.dumps(sql_pred,ensure_ascii=False).encode('utf-8')+'\n')
+		# fw.writelines(json.dumps(sql_pred,ensure_ascii=False).encode('utf-8')+'\n')
 	fw.close()
-
 
 
 def epoch_acc(model, batch_size, sql_data, table_data, db_path, tokenizer=None):
@@ -477,6 +471,7 @@ def epoch_acc(model, batch_size, sql_data, table_data, db_path, tokenizer=None):
 	perm = list(range(len(sql_data)))
 	badcase = 0
 	one_acc_num, tot_acc_num, ex_acc_num = 0.0, 0.0, 0.0
+	total_error_cases = []
 	for st in tqdm(range(len(sql_data) // batch_size + 1)):
 		ed = (st + 1) * batch_size if (st + 1) * batch_size < len(perm) else len(perm)
 		st = st * batch_size
@@ -499,9 +494,11 @@ def epoch_acc(model, batch_size, sql_data, table_data, db_path, tokenizer=None):
 				# generate predicted format
 				pred_queries = model.gen_query(score, q_seq, col_seq, raw_q_seq)
 
+		pred_queries_post = post_process(pred_queries, sql_data, table_data, perm, st, ed)
+		one_err, tot_err, error_idxs = check_acc(raw_data, pred_queries_post, query_gt)
 
-		pred_queries = post_process(pred_queries, sql_data, table_data, perm, st, ed)
-		one_err, tot_err = check_acc(raw_data, pred_queries, query_gt)
+		total_error_cases.extend(
+			gen_batch_error_cases(error_idxs, q_seq, query_gt, pred_queries_post, pred_queries, raw_data))
 
 		# except:
 		# 	badcase += 1
@@ -519,6 +516,7 @@ def epoch_acc(model, batch_size, sql_data, table_data, db_path, tokenizer=None):
 			except:
 				ret_pred = None
 			ex_acc_num += (ret_gt == ret_pred)
+	save_error_case(total_error_cases)
 	return one_acc_num / len(sql_data), tot_acc_num / len(sql_data), ex_acc_num / len(sql_data)
 
 
@@ -526,9 +524,9 @@ def post_process(pred, sql_data, table_data, perm, st, ed):
 	for i in range(st, ed):
 		sql = sql_data[perm[i]]
 		table = table_data[sql['table_id']]
-		for c in range(len(pred[i-st]['conds'])):
-			col_idx = pred[i-st]['conds'][c][0]
-			col_val = pred[i-st]['conds'][c][2]
+		for c in range(len(pred[i - st]['conds'])):
+			col_idx = pred[i - st]['conds'][c][0]
+			col_val = pred[i - st]['conds'][c][2]
 			if col_idx > len(table['header']) or col_val == "" or table['types'][col_idx] == 'real':
 				continue
 			col_data = []
@@ -540,7 +538,7 @@ def post_process(pred, sql_data, table_data, perm, st, ed):
 			match, score = process.extractOne(col_val, col_data, processor=my_process)
 			if score == 0:
 				continue
-			pred[i-st]['conds'][c][2] = match
+			pred[i - st]['conds'][c][2] = match
 	return pred
 
 
@@ -557,6 +555,7 @@ def check_acc(vis_info, pred_queries, gt_queries):
 
 	tot_err = sel_num_err = agg_err = sel_err = 0.0
 	cond_num_err = cond_col_err = cond_op_err = cond_val_err = cond_rela_err = 0.0
+	bad_sample_idxs = []
 	for b, (pred_qry, gt_qry) in enumerate(zip(pred_queries, gt_queries)):
 		good = True
 		sel_pred, agg_pred, where_rela_pred = pred_qry['sel'], pred_qry['agg'], pred_qry['cond_conn_op']
@@ -613,9 +612,31 @@ def check_acc(vis_info, pred_queries, gt_queries):
 
 		if not good:
 			tot_err += 1
+			bad_sample_idxs.append(b)
 
 	return np.array((sel_num_err, sel_err, agg_err, cond_num_err, cond_col_err, cond_op_err, cond_val_err,
-					 cond_rela_err)), tot_err
+					 cond_rela_err)), tot_err, bad_sample_idxs
+
+
+def gen_batch_error_cases(error_idxs, q_seq, query_gt, pred_queries_post, pred_queries, raw_data):
+	error_cases = []
+	for idx in error_idxs:
+		single_error = {}
+		single_error['q_raw'] = raw_data[idx][0]
+		single_error['q_normed'] = strPreProcess(single_error['q_raw'])
+		single_error['gt'] = query_gt[idx]
+		single_error['pred'] = copy.deepcopy(pred_queries_post[idx])
+		for i in range(len(single_error['pred']['conds'])):
+			single_error['pred']['conds'][i].append(pred_queries[idx]['conds'][i][2])
+		single_error['cols'] = raw_data[idx][1]
+		error_cases.append(single_error)
+	return error_cases
+
+
+def save_error_case(error_case, fn='./log/error_case.json'):
+	with open(fn, "w") as f:
+		json.dump(error_case, f, ensure_ascii=False, indent=4)
+
 
 def load_word_emb(file_name):
 	print('Loading word embedding from %s' % file_name)
