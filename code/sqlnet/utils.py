@@ -93,17 +93,25 @@ def load_data(sql_paths, table_paths, use_small=False):
 	return ret_sql_data, table_data
 
 
-def load_dataset(toy=False, use_small=False, mode='train'):
+def load_dataset(data_dir='../data', toy=False, use_small=False, mode='train'):
 	print("Loading dataset")
-	dev_sql, dev_table = load_data('data/val/val.json', 'data/val/val.tables.json', use_small=use_small)
-	dev_db = 'data/val/val.db'
+	import os.path as osp
+	data_dirs = {}
+	for name in ['train', 'val', 'test']:
+		data_dirs[name] = {}
+		data_dirs[name]['data'] = osp.join(data_dir, name, name+'.json')
+		data_dirs[name]['tables'] = osp.join(data_dir, name, name + '.tables.json')
+		data_dirs[name]['db'] = osp.join(data_dir, name, name + '.db')
+
+	dev_sql, dev_table = load_data(data_dirs['val']['data'], data_dirs['val']['tables'], use_small=use_small)
+	dev_db = data_dirs['val']['db']
 	if mode == 'train':
-		train_sql, train_table = load_data('data/train/train.json', 'data/train/train.tables.json', use_small=use_small)
-		train_db = 'data/train/train.db'
+		train_sql, train_table = load_data(data_dirs['train']['data'], data_dirs['train']['tables'], use_small=use_small)
+		train_db = data_dirs['train']['db']
 		return train_sql, train_table, train_db, dev_sql, dev_table, dev_db
 	elif mode == 'test':
-		test_sql, test_table = load_data('data/test/test.json', 'data/test/test.tables.json', use_small=use_small)
-		test_db = 'data/test/test.db'
+		test_sql, test_table = load_data(data_dirs['test']['data'], data_dirs['test']['tables'], use_small=use_small)
+		test_db = data_dirs['test']['db']
 		return dev_sql, dev_table, dev_db, test_sql, test_table, test_db
 
 
@@ -516,7 +524,7 @@ def epoch_acc(model, batch_size, sql_data, table_data, db_path, tokenizer=None):
 			except:
 				ret_pred = None
 			ex_acc_num += (ret_gt == ret_pred)
-	save_error_case(total_error_cases)
+	# save_error_case(total_error_cases)
 	return one_acc_num / len(sql_data), tot_acc_num / len(sql_data), ex_acc_num / len(sql_data)
 
 
