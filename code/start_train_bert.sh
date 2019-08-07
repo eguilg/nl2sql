@@ -5,6 +5,6 @@ python train_bert.py --gpu \
                      --epoch 30 \
                      --data_dir ../data/ \
                      --bert_model_dir ../model/chinese-bert_chinese_wwm_pytorch/ \
-                     --model_save_path ../model/best_bert_model
+                     --model_save_path ../model/saved_bert_model
 
 
