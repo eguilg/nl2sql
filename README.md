@@ -1,123 +1,40 @@
-***** New July 13th, 2019 *****
+## [阿里天池首届中文NL2SQL挑战赛](https://tianchi.aliyun.com/competition/entrance/231716/introduction) 
+排名: 8
 
-Code for competition based on the baseline of ZhuiYi.
+队名: 爆写规则一万行
 
-Added simple BERT-based model.
-## TODO
-1. 1 col N conds 问题 --对应W-num瓶颈
+成员: [eguilg](https://github.com/eguilg), [严之zh](https://github.com/zhangyan333), [naniwet](https://github.com/naniwet)
 
-    multi_cond_count: 5217
+### Environments
+Ubuntu 18.04
 
-    multi_sql_count: 5127
-2. value type 问题 (text/real)  --对应W-val瓶颈
+Python: 3.6.5
 
-     bad_cond_count: 12057
-     
-     bad_sql_count: 10027
-* 输入中每一列的开头加入column类别标志位
+Pytorch: 1.1.0 
 
-    'text'->'['unused1']'
-    
-    'real'->'[unused2]'
-* Text Normalization
-    * 16年->2016 17年5月 2017年5月 2017.5
-    * 2万->20000 三百->300
-    * XX股->XX股份
-    * 一千万->1000  一百亿->100
-    * 北上->北京 上海
-    * 四角钱->0.4
-    
+CUDA: 9.0
 
-        
-##
+CUDNN: 7.1.3
 
-***** New June 21st, 2019 *****
+### Required packages
+We used [pytorch-pretrained-bert](https://pypi.org/project/pytorch-pretrained-bert/) package for backbone BERT model. 
 
-This branch aims to support Python3, which is developed under Python3.5 and PyTorch1.0.
+(**Note that** the original [pytorch-pretrained-bert](https://pypi.org/project/pytorch-pretrained-bert/) was updated to [pytorch-transformers](https://github.com/huggingface/pytorch-transformers) during the contest, but we chose to stick to the old version for stability.)
 
-ATTENTION: To use this version of code, please download nl2sql_char_embedding_py3.zip to use, instead of nl2sql_char_embedding_baseline.zip.  
-
-***** New June 18th, 2019 *****
-
-This version of release supports execution accuracy, which gets the execution result of predicted SQL. This requires records==0.5.3 before running.
-
-## Introduction
-
-This baseline method is developed and refined based on <a href="https://github.com/xiaojunxu/SQLNet">code</a> of <a href="https://arxiv.org/abs/1711.04436">SQLNet</a>, which is a baseline model in <a href="https://github.com/salesforce/WikiSQL">WikiSQL</a>.
-
-The model decouples the task of generating a whole SQL into several sub-tasks, including select-number, select-column, select-aggregation, condition-number, condition-column and so on.
-
-Simple model structure shows here, implementation details could refer to the origin <a href="https://arxiv.org/abs/1711.04436">paper</a>.
-
-<div align="middle"><img src="https://github.com/ZhuiyiTechnology/nl2sql_baseline/blob/master/img/detailed_structure.png"width="80%" ></div>
-
-The difference between SQLNet and this baseline model is, Select-Number and Where-Relationship sub-tasks are added to adapt this Chinese NL2SQL dataset better.
-
-## Dependencies
-
- - Python 2.7
- - torch 1.0.1
- - records 0.5.3
- - tqdm
-
-## Start to train
-
-Firstly, download the provided datasets at ~/data_nl2sql/, which should include train.json, train.tables.json, val.json, val.tables.json and char_embedding, and divide them in following structure.
+Required Python packages:
 ```
-├── data_nl2sql
-│ ├── train
-│ │ ├── train.db
-│ │ ├── train.json
-│ │ ├── train.tables.json
-│ ├── val
-│ │ ├── val.db
-│ │ ├── val.json
-│ │ ├── val.tables.json
-│ ├── test
-│ │ ├── test.db
-│ │ ├── test.json
-│ │ ├── test.tables.json
-│ ├── char_embedding.json
+torch==1.1.0
+pytorch-pretrained-bert==0.6.2
+fuzzywuzzy==0.17.0
+numpy==1.17.0
+tqdm==4.24.0
+records
+ujson
 ```
-and then
+Command to install the required python packages:
 ```
-mkdir ~/nl2sql
-cd ~/nl2sql/
-git clone https://github.com/ZhuiyiTechnology/nl2sql_baseline.git
-
-cp -r ~/data_nl2sql/* ~/nl2sql/nl2sql_baseline/data/
-cd ~/nl2sql/nl2sql_baseline/
-
-sh ./start_train.sh 0 128
+pip install -r requirements.txt
 ```
-while the first parameter 0 means gpu number, the second parameter means batch size.
 
-## Start to evaluate
-
-To evaluate on val.json or test.json, make sure trained model is ready, then run
-```
-cd ~/nl2sql/nl2sql_baseline/
-sh ./start_test.sh 0 pred_example
-```
-while the first parameter 0 means gpu number, the second parameter means the output path of prediction.
-
-## Experiment result
-
-We have run experiments several times, achiving avegrage 27.5% logic form accuracy on the val dataset, with 128 batch size.
-
-
-## Experiment analysis
-
-We found the main challenges of this datasets containing poor condition value prediction, select column and condition column not mentioned in NL question, inconsistent condition relationship representation between NL question and SQL, etc. All these challenges could not be solved by existing baseline and SOTA models.
-
-Correspondingly, this baseline model achieves only 77% accuracy on condition column and 62% accuracy on condition value respectively even on the training set, and the overall logic form is only around 50% as well, indicating these problems are challenging for contestants to solve.
-
-<div align="middle"><img src="https://github.com/ZhuiyiTechnology/nl2sql_baseline/blob/master/img/trainset_behavior.png"width="80%" ></div>
-
-## Related resources:
-https://github.com/salesforce/WikiSQL
-
-https://yale-lily.github.io/spider
-
-<a href="https://arxiv.org/pdf/1804.08338.pdf">Semantic Parsing with Syntax- and Table-Aware SQL Generation</a>
+### [Train/Test](code/README.md)
 
