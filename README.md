@@ -23,13 +23,12 @@ We used [pytorch-pretrained-bert](https://pypi.org/project/pytorch-pretrained-be
 
 Required Python packages:
 ```
-torch==1.1.0
-pytorch-pretrained-bert==0.6.2
 fuzzywuzzy==0.17.0
 numpy==1.17.0
+torch==1.1.0
+pytorch-pretrained-bert==0.6.2
 tqdm==4.24.0
-records
-ujson
+records 
 ```
 Command to install the required python packages:
 ```
