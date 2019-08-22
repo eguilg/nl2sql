@@ -8,7 +8,7 @@ from sqlnet.strPreprocess import strPreProcess
 from fuzzywuzzy import process
 from fuzzywuzzy.utils import StringProcessor
 import copy
-
+from sqlnet.diff2 import extact_sort
 from functools import lru_cache
 
 
@@ -35,27 +35,53 @@ def pos_in_tokens(target_str, tokens):
 		return -1, -1
 	tlen = len(target_str)
 	ngrams = []
-	for l in range(max(1, tlen - 10), tlen + 5):
+	for l in range(max(1, tlen - 25), min(tlen + 5, len(tokens))):
 		ngrams.append(l)
 
 	candidates = {}
 	for l in ngrams:
 		cur_idx = 0
 		while cur_idx <= len(tokens) - l:
-			cur_str = ""
+			cur_str = []
 			st, ed = cur_idx, cur_idx
 			i = st
 			while i != len(tokens) and len(cur_str) < l:
-				cur_tok = tokens[i].replace("##", "").replace("[UKN]", "")
-				cur_str += cur_tok
+				cur_tok = tokens[i]
+				cur_str.append(cur_tok)
 				i += 1
 				ed = i
+			cur_str = ''.join(cur_str)
+			if '##' in cur_str :
+				cur_str = cur_str.replace('##','')
+			if '[UNK]' in cur_str :
+				cur_str = cur_str.replace('[UNK]','')
+			if '-' in cur_str :
+				cur_str = cur_str.replace('-','')
 			candidates[cur_str] = (st, ed)
 			cur_idx += 1
-	results = process.extract(target_str, list(candidates.keys()), limit=10, processor=my_process, scorer=my_scorer)
-	if not results:
+	if list(candidates.keys()) is None or len(list(candidates.keys())) == 0:
+		print('-----testnone----',target_str, tokens,ngrams)
 		return -1, -1
-	chosen, cscore = results[0]
+	target_str = strPreProcess(target_str).replace('-', '')
+	resultsf = process.extract(target_str, list(candidates.keys()), limit=10, processor=my_process, scorer=my_scorer)
+	results = extact_sort(target_str, list(candidates.keys()), limit=10)
+	if not results or not resultsf:
+		return -1, -1
+	dchosen, dcscore = results[0]
+	fchosen, fcscore = resultsf[0]
+	if fcscore > dcscore:
+		cscore = fcscore
+		chosen = fchosen
+	else:
+		cscore = dcscore
+		chosen = dchosen
+	if cscore !=100:
+		#q = ''.join(tokens).replace('##','')
+		#score = '%d'%(cscore)
+		pass
+		#with open("F:\\天池比赛\\nl2sql_test_20190618\\log.txt", "a", encoding='utf-8') as fw:
+		#	fw.write(str(chosen + '-----' + target_str + '---'+score +'--'+ q +'\n'+'\n'))
+
 	if cscore <= 5:
 		return -1, -1
 	return candidates[chosen]
@@ -444,7 +470,7 @@ def epoch_train(model, optimizer, batch_size, sql_data, table_data, tokenizer=No
 def predict_test(model, batch_size, sql_data, table_data, output_path, tokenizer=None):
 	model.eval()
 	perm = list(range(len(sql_data)))
-	fw = open(output_path, 'w')
+	fw = open(output_path, 'w', encoding='utf-8')
 	for st in tqdm(range(len(sql_data) // batch_size + 1)):
 		if st * batch_size == len(perm):
 			break

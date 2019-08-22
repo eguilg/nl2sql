@@ -50,7 +50,7 @@ class SQLBert(BertPreTrainedModel):
 	def forward(self, inputs, return_logits=True):
 
 		input_seq, q_mask, sel_col_mask, sel_col_index, where_col_mask, \
-		where_col_index, col_end_index, token_type_ids, attention_mask = self.transform_inputs(inputs)
+		where_col_index, col_end_index, token_type_ids, attention_mask = self.transform_inputs(inputs, dtype=torch.long)
 		out_seq, pooled_output = self.bert(input_seq, token_type_ids, attention_mask, output_all_encoded_layers=False)
 
 		out_seq = self.dropout(out_seq)
@@ -161,7 +161,12 @@ class SQLBert(BertPreTrainedModel):
 
 		where_conn_label, sel_num_label, where_num_label, \
 		sel_col_label, sel_agg_label, where_col_label, where_op_label, \
-		where_start_label, where_end_label = self.transform_inputs(labels)
+		where_start_label, where_end_label = labels
+
+		where_conn_label, sel_num_label, where_num_label, sel_agg_label, where_op_label, where_start_label, where_end_label = self.transform_inputs(
+			(where_conn_label, sel_num_label, where_num_label, sel_agg_label, where_op_label, where_start_label,
+			 where_end_label), dtype=torch.long)
+		sel_col_label, where_col_label = self.transform_inputs((sel_col_label, where_col_label), dtype=torch.float)
 
 		# q_lens, col_nums = self.transform_inputs((q_lens, col_nums))
 		# q_lens, col_nums = q_lens.float(), col_nums.float()
@@ -183,14 +188,14 @@ class SQLBert(BertPreTrainedModel):
 
 		return loss
 
-	def transform_inputs(self, inputs):
+	def transform_inputs(self, inputs, dtype=torch.long):
 		for x in inputs:
 			if isinstance(x, (list, tuple)):
 				x = np.array(x)
 			if self.gpu:
-				yield torch.from_numpy(np.array(x)).cuda()
+				yield torch.from_numpy(np.array(x)).to(dtype).cuda()
 			else:
-				yield torch.from_numpy(np.array(x))
+				yield torch.from_numpy(np.array(x)).to(dtype)
 
 	def gen_query(self, scores, q, col, sql_data, table_data, perm, st, ed, beam=False, k=10):
 

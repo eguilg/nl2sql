@@ -20,7 +20,7 @@ def strPreProcess(question):
         if re.search(r'为正值|为正', value):
             value = re.sub(r'为正值|为正', '大于0', value)
         # X.x块钱  X毛钱
-        value = value.replace('块钱', '元')
+        value = value.replace('块钱', '块')
         patten_money = re.compile(r'[零|一|幺|二|两|三|四|五|六|七|八|九|十|百]{1,}点[零|一|幺|二|两|三|四|五|六|七|八|九|十|百]{1,}')
         k = patten_money.findall(value)
         if k:
@@ -53,13 +53,28 @@ def strPreProcess(question):
                 maoflo = str(float(valmao)/10) + '元'
                 value = value.replace(item, maoflo, 1)
         value = value.replace('元毛', '元')
-        mm = re.findall(r'[〇|零|一|幺|二|两|三|四|五|六|七|八|九|十|百]{2,}',value)
+#        patten_datec = re.compile(r'[零|一|幺|二|两|三|四|五|六|七|八|九|十|百|0|1|2|3|4|5|6|7|8|9]{1,}月[零|一|幺|二|两|三|四|五|六|七|八|九|十|百|0|1|2|3|4|5|6|7|8|9]{,2}')
+#        kmonthday = patten_datec.findall(value)
+#        if kmonthday:
+#            print('kmonthday',kmonthday)
+
+        #更改中文数字--阿拉伯数字
+        mm = re.findall(r'[123456789〇零一幺二两三四五六七八九十百千万]{2,}',value)
         if mm:
             for item in mm:
                 v, r = chinese_to_digits(item)
                 if r ==1 and v//10 + 1 !=len(item):
                     v = str(v).zfill(len(item) - v//10)
                 value = value.replace(item, str(v),1)
+
+        mm2 = re.findall(r'[〇零一幺二两三四五六七八九十百千]{1,}[倍|个|元|人|名|位|周|亿|以上|年]', value)
+        if mm2:
+            for item in mm2:
+                mm22 = re.findall(r'[〇零一幺二两三四五六七八九十百千]{1,}', item)
+                for item2 in mm22:
+                    v2,r2= chinese_to_digits(item2)
+                    itemvalue = item.replace(item2, str(v2), 1)
+                value = value.replace(item, itemvalue, 1)
 
         #百分之几----\d%
         if re.search(r'百分之', value):
@@ -71,13 +86,13 @@ def strPreProcess(question):
                     k, r = chinese_to_digits(item_t)
                     item_t = str(k) + '%'
                     value = re.sub(str(item), str(item_t), value)
-                    # print('1--',items,value)
+                    #print('1--',items,value)
             items_two = re.findall(r'百分之\d{1,}\.?\d*', value)
             if items_two:
                 for item in items_two:
                     item_t = item.replace('百分之', '') + '%'
                     value = re.sub(str(item), str(item_t), value)
-                    # print('2--', items_two, value)
+                    #print('2--', items_two, value)
         if re.search(r'百分点', value):
             items_we = re.findall(r'[零|一|幺|二|两|三|四|五|六|七|八|九|十|百]{1,}.??百分点', value)
             if items_we:
@@ -86,13 +101,24 @@ def strPreProcess(question):
                     k,r = chinese_to_digits(item_t)
                     item_t = str(k) + '%'
                     value = re.sub(str(item), str(item_t), value)
-                # print('百分点-中',items_we,value)
+                #print('百分点-中',items_we,value)
             items_se = re.findall(r'\d+?\.??\d*.??百分点', value)
             if items_se:
                 for item in items_se:
                     item_t = re.sub('.??百分点', '', item) + '%'
                     value = re.sub(str(item), str(item_t), value)
-                # print('百分点-ala', items_se, value)
+                #print('百分点-ala', items_se, value)
+
+        mm3 = re.findall(r'[大于|小于|前|超过][〇零一幺二两三四五六七八九十百千]{1,}', value)
+        if mm3:
+            for item in mm3:
+                mm33 = re.findall(r'[〇零一幺二两三四五六七八九十百千]{1,}', item)
+                for item2 in mm33:
+                    v3, r3 = chinese_to_digits(item2)
+                    itemvalue = item.replace(item2, str(v3), 1)
+                # v, r = chinese_to_digits(item)
+                value = value.replace(item, itemvalue, 1)
+
         # 更改中文年份并补充完整
         pattern_date1 = re.compile(r'(\d{2,4}年)')
         #pattern_date1 = re.compile(r'(.{1}月.{,2})日|号')
@@ -110,16 +136,26 @@ def strPreProcess(question):
             for item in dateList2:
                 v = str_to_date(item)
                 value = re.sub(str(item), str(v), value)
-        pattern_date3 = re.compile(r'(.{1})月(.{1})(号|日)')
+        pattern_date3 = re.compile(r'[零|一|幺|二|两|三|四|五|六|七|八|九|十|百|0|1|2|3|4|5|6|7|8|9]{1,}月[零|一|幺|二|两|三|四|五|六|七|八|九|十|百|0|1|2|3|4|5|6|7|8|9]{1,2}')
         date3 = pattern_date3.findall(value)
         if date3:
+            nflag = 0
             for item in date3:
-                for i in range(len(item) -1):
-                    if item[i].isdigit():
-                        pass
-                    else:
-                        k,r = chinese_to_digits(item[i])
-                        value = value.replace(item[i],str(k),1)
+                listm = item.split('月')
+                if listm[0].isdigit():
+                    front = listm[0]
+                else:
+                    front, rf = chinese_to_digits(listm[0])
+                    nflag = 1
+                if listm[1].isdigit():
+                    end = listm[1]
+                else:
+                    end, rn = chinese_to_digits(listm[1])
+                    nflag = 1
+                if nflag:
+                    kv= str(front) + '月'+ str(end)
+                    value = value.replace(item, kv,1)
+
         pattern_date4 = re.compile(r'\d*?年[\D]{1}月')
         date4 = pattern_date4.findall(value)
         if date4:
@@ -129,7 +165,11 @@ def strPreProcess(question):
                 mm = item.replace(kitem[0],str(k))
                 value = re.sub(item, mm, value)
 
-
+        if re.search(r'1下|1共|.1元股|1线', value):
+            value = value.replace('1下', '一下')
+            value = value.replace('.1元股', '元一股')
+            value = value.replace('1共', '一共')
+            value = value.replace('1线', '一线')
 
     except Exception as exc:
         print(exc)
@@ -142,6 +182,15 @@ def chinese_to_digits(uchars_chinese):
     total = 0
 
     common_used_numerals_tmp = {
+        '1': 1,
+        '2': 2,
+        '3': 3,
+        '4': 4,
+        '5': 5,
+        '6': 6,
+        '7': 7,
+        '8': 8,
+        '9': 9,
         '〇': 0,
         '零': 0,
         '一': 1,
@@ -156,7 +205,9 @@ def chinese_to_digits(uchars_chinese):
         '八': 8,
         '九': 9,
         '十': 10,
-        '百': 100
+        '百': 100,
+        '千': 1000,
+        '万': 10000
     }
     r = 1  # 表示单位：个十百千...
     try:
@@ -288,23 +339,39 @@ str_test8 = '三块五毛钱，四块五毛钱，三千万，六点五块钱，�
 '''
 
 #patten = re.compile(r'[零|一|幺|二|两|三|四|五|六|七|八|九|十|百]{1,}块[零|一|幺|二|两|三|四|五|六|七|八|九|十|百]{1,}')
+def datacontinous(strcofig):
 
-# with open("F:\\天池比赛\\nl2sql_train_20190618\\train.json", "r", encoding='utf-8') as fr,open("F:\\天池比赛\\nl2sql_train_20190618\\log.txt", "w+", encoding='utf-8') as fw:
-#     count = 0
-#     for line in fr.readlines():
-#         lines = eval(line)
-#         value_re = strPreProcess(lines['question'])
-#         count += 1
-#         if value_re != lines['question']:
-#             string = lines['question'] + '-----' + value_re + '\n'
-#             fw.write(str(string))
-#     print('count',count)
+    question = strcofig
+    p = re.compile(r'([零一幺二两三四五六七八九十百0123456789]+.?)([零一幺二两三四五六七八九十百0123456789]+.?)到([零一幺二两三四五六七八九十百0123456789]+.?[零一幺二两三四五六七八九十百0123456789]+)')
+    plist = p.findall(question)
+    if plist:
+        for item in plist:
+            front = '{}{}'.format(item[0],item[1])
+            end = str(item[2])
+        #print('---到---',plist,front,end)
+    pdig = re.compile(r'([零一幺二两三四五六七八九].?)+')
+    plist = pdig.findall(question)
+    if plist:
+        print('plist--',plist)
 
+
+''''
+with open("F:\\天池比赛\\nl2sql_test_20190618\\test.json", "r", encoding='utf-8') as fr,open("F:\\天池比赛\\nl2sql_test_20190618\\log.txt", "w+", encoding='utf-8') as fw:
+    count = 0
+    for line in fr.readlines():
+        lines = eval(line)
+        value_re = strPreProcess(lines['question'])
+        value_re = datacontinous(value_re)
+        count += 1
+        #if value_re != lines['question']:
+        #    string = lines['question'] + '-----' + value_re + '\n'
+        #    fw.write(str(string))
+    print('count',count)
+    
+'''
 
 # value_re = strPreProcess(str_test7)
 # print('----',value_re)
-
-
 
 '''
         if re.search(r'1下|1共|1句|1线|哪1年|哪1天', value):
@@ -320,3 +387,4 @@ str_test8 = '三块五毛钱，四块五毛钱，三千万，六点五块钱，�
             value = value.replace('2线', '二线')
             value = value.replace('2办', '两办')
 '''
+
