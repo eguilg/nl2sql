@@ -444,7 +444,7 @@ def epoch_train(model, optimizer, batch_size, sql_data, table_data, tokenizer=No
 def predict_test(model, batch_size, sql_data, table_data, output_path, tokenizer=None):
 	model.eval()
 	perm = list(range(len(sql_data)))
-	fw = open(output_path, 'w')
+	fw = open(output_path, 'w', encoding='utf-8')
 	for st in tqdm(range(len(sql_data) // batch_size + 1)):
 		if st * batch_size == len(perm):
 			break
@@ -642,7 +642,7 @@ def gen_batch_error_cases(error_idxs, q_seq, query_gt, pred_queries_post, pred_q
 
 
 def save_error_case(error_case, fn='./log/error_case.json'):
-	with open(fn, "w") as f:
+	with open(fn, "w", encoding='utf-8') as f:
 		json.dump(error_case, f, ensure_ascii=False, indent=4)
 
 
