@@ -8,7 +8,7 @@ from sqlnet.strPreprocess import strPreProcess
 from fuzzywuzzy import process
 from fuzzywuzzy.utils import StringProcessor
 import copy
-
+from sqlnet.diff2 import extact_sort
 from functools import lru_cache
 
 
@@ -35,28 +35,60 @@ def pos_in_tokens(target_str, tokens):
 		return -1, -1
 	tlen = len(target_str)
 	ngrams = []
-	for l in range(max(1, tlen - 10), tlen + 5):
+	for l in range(max(1, tlen - 25), min(tlen + 5, len(tokens))):
 		ngrams.append(l)
 
 	candidates = {}
 	for l in ngrams:
 		cur_idx = 0
 		while cur_idx <= len(tokens) - l:
-			cur_str = ""
+			cur_str = []
 			st, ed = cur_idx, cur_idx
 			i = st
 			while i != len(tokens) and len(cur_str) < l:
-				cur_tok = tokens[i].replace("##", "").replace("[UKN]", "")
-				cur_str += cur_tok
+				cur_tok = tokens[i]
+				cur_str.append(cur_tok)
 				i += 1
 				ed = i
+			cur_str = ''.join(cur_str)
+			if '##' in cur_str :
+				cur_str = cur_str.replace('##', '')
+			if '[UNK]' in cur_str :
+				cur_str = cur_str.replace('[UNK]', '')
+			if '-' in cur_str :
+				cur_str = cur_str.replace('-', '')
 			candidates[cur_str] = (st, ed)
 			cur_idx += 1
-	results = process.extract(target_str, list(candidates.keys()), limit=10, processor=my_process, scorer=my_scorer)
-	if not results:
+	if list(candidates.keys()) is None or len(list(candidates.keys())) == 0:
+		print('-----testnone----',target_str, tokens,ngrams)
 		return -1, -1
-	chosen, cscore = results[0]
+	target_str = strPreProcess(target_str).replace('-', '')
+	resultsf = process.extract(target_str, list(candidates.keys()), limit=10, processor=my_process, scorer=my_scorer)
+	results = extact_sort(target_str, list(candidates.keys()), limit=10)
+	if not results or not resultsf:
+		return -1, -1
+	dchosen, dcscore = results[0]
+	fchosen, fcscore = resultsf[0]
+	if fcscore > dcscore:
+		cscore = fcscore
+		chosen = fchosen
+	else:
+		cscore = dcscore
+		chosen = dchosen
+	if cscore !=100:
+		#q = ''.join(tokens).replace('##','')
+		#score = '%d'%(cscore)
+		pass
+		#with open("F:\\天池比赛\\nl2sql_test_20190618\\log.txt", "a", encoding='utf-8') as fw:
+		#	fw.write(str(chosen + '-----' + target_str + '---'+score +'--'+ q +'\n'+'\n'))
+
 	if cscore <= 5:
+		'''
+		q = ''.join(tokens).replace('##','')
+		score = '%d'%(cscore)
+		with open("F:\\天池比赛\\nl2sql_test_20190618\\log.txt", "a", encoding='utf-8') as fw:
+			fw.write(str(chosen + '-----' + target_str + '---'+score +'--'+ q +'\n'+'\n'))
+		'''
 		return -1, -1
 	return candidates[chosen]
 
@@ -116,14 +148,14 @@ def load_dataset(data_dir='../data', toy=False, use_small=False, mode='train'):
 
 
 def to_batch_seq(sql_data, table_data, idxes, st, ed, tokenizer=None, ret_vis_data=False):
-	q_seq = []
-	col_seq = []
-	col_num = []
-	ans_seq = []
-	gt_cond_seq = []
-	vis_seq = []
-	sel_num_seq = []
-	header_type = []
+	q_seq = []   #问题内容
+	col_seq = []  #一张表所有表头
+	col_num = []   #表头数量
+	ans_seq = []    #sql的答案列表
+	gt_cond_seq = []  #条件列--列号，类型，值
+	vis_seq = []		#（）tuple，问题和对应表所有表头
+	sel_num_seq = []	#sel列的数量
+	header_type = []	#对应表所有列的数据类型
 	for i in range(st, ed):
 		sql = sql_data[idxes[i]]
 		sel_num = len(sql['sql']['sel'])
@@ -250,8 +282,9 @@ def gen_batch_bert_seq(tokenizer, q_seq, col_seq, header_type, max_len=230):
 		where_col_index.append(where_col)
 		col_end_index.append(col_ends)
 
+	#规范输入为同一长度，pad = ’[pad]‘ | 0
 	input_seq = pad_batch_seqs(input_seq, '[PAD]')
-	input_seq = [tokenizer.convert_tokens_to_ids(sq) for sq in input_seq]
+	input_seq = [tokenizer.convert_tokens_to_ids(sq) for sq in input_seq] #字符token转化为词汇表里的编码id
 	q_mask = pad_batch_seqs(q_mask)
 	sel_col_mask = pad_batch_seqs(sel_col_mask)
 	sel_col_index = pad_batch_seqs(sel_col_index)
@@ -317,7 +350,7 @@ def generate_gt_where_seq_test(q, gt_cond_seq):
 def gen_bert_labels(q_seq, q_lens, sel_col_nums, where_col_nums, ans_seq, gt_cond_seq):
 	q_max_len = max(q_lens)
 	sel_col_max_len = max(sel_col_nums)
-	where_col_max_len = max(where_col_nums)
+	where_col_max_len = max(where_col_nums) #2col
 
 	# labels init
 	where_conn_label = np.array([x[6] for x in ans_seq])  # (None, )
@@ -325,14 +358,13 @@ def gen_bert_labels(q_seq, q_lens, sel_col_nums, where_col_nums, ans_seq, gt_con
 	where_num_label = np.array([0 for _ in ans_seq])  # (None, )
 	sel_col_label = np.array([[0] * sel_col_max_len for _ in ans_seq], dtype=np.float)  # (None, col_max_len)
 	sel_agg_label = np.array([[-1] * sel_col_max_len for _ in ans_seq])  # (None, col_max_len)
-	where_col_label = np.array([[0] * where_col_max_len for _ in ans_seq], dtype=np.float)  # (None, col_max_len)
-	where_op_label = np.array([[-1] * where_col_max_len for _ in ans_seq])  # (None, col_max_len)
+	where_col_label = np.array([[0] * where_col_max_len for _ in ans_seq], dtype=np.float)  # (None, 2col_max_len)
+	where_op_label = np.array([[-1] * where_col_max_len for _ in ans_seq])  # (None, 2col_max_len)
 
 	where_start_label = np.array([[-1] * where_col_max_len for _ in ans_seq])
 	where_end_label = np.array([[-1] * where_col_max_len for _ in ans_seq])
-
-	for b in range(len(gt_cond_seq)):
-		num_conds = len(gt_cond_seq[b])
+	for b in range(len(gt_cond_seq)): # batch_size
+		num_conds = len(gt_cond_seq[b]) # 条件数量
 		if num_conds == 0:
 			where_col_label[b] = 1.0 / sel_col_nums[b]  # 分散
 			mass = 0
@@ -411,6 +443,12 @@ def epoch_train(model, optimizer, batch_size, sql_data, table_data, tokenizer=No
 
 			# gen label
 			labels = gen_bert_labels(q_seq, q_lens, sel_col_nums, where_col_nums, ans_seq, gt_cond_seq)
+			# q_seq  (12,q_lens) 问题内容
+			# q_lens  (12,1)问题长度
+			# sel_col_nums (12,1) col 长度
+			# where_col_nums (12,1)2col长度
+			# ans_seq   [(1, [6], [0], 1, (1,), (2,), 0),] len(agg),sel_col,agg,len(con),con_col,con_type,con_op
+			# gt_cond_seq (12,3)条件列--列号，类型，值
 
 			# compute loss
 			loss = model.loss(logits, labels, q_lens, sel_col_nums)
