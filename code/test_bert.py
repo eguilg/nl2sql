@@ -17,6 +17,7 @@ if __name__ == '__main__':
 	parser.add_argument('--result_path', type=str,
 						default='./result.json',
 						help='Output path of prediction result')
+	parser.add_argument('--local_eval', action='store_true')
 
 	args = parser.parse_args()
 
@@ -29,12 +30,13 @@ if __name__ == '__main__':
 
 	result_path = args.result_path
 
-	test_sql_path = osp.join(data_dir, 'final_test.json')
-	test_table_path = osp.join(data_dir, 'final_test.tables.json')
-
-	# dev_sql, dev_table, dev_db, test_sql, test_table, test_db = load_dataset(data_dir=data_dir, use_small=False,
-	# 																		 mode='test')
-	test_sql, test_table = load_data(test_sql_path, test_table_path)
+	if args.local_eval:
+		dev_sql, dev_table, dev_db, test_sql, test_table, test_db = load_dataset(data_dir=data_dir, use_small=False,
+																			 	mode='test')
+	else:
+		test_sql_path = osp.join(data_dir, 'final_test.json')
+		test_table_path = osp.join(data_dir, 'final_test.tables.json')
+		test_sql, test_table = load_data(test_sql_path, test_table_path)
 
 	tokenizer = BertTokenizer.from_pretrained(bert_model_dir, do_lower_case=True)
 	model = SQLBert.from_pretrained(bert_model_dir)
@@ -42,9 +44,10 @@ if __name__ == '__main__':
 	model.load_state_dict(torch.load(restore_model_path))
 	print("Loaded model from %s" % restore_model_path)
 
-	# dev_acc = epoch_acc(model, batch_size, dev_sql, dev_table, dev_db, tokenizer=tokenizer)
-	# print ('Dev Logic Form Accuracy: %.3f, Execution Accuracy: %.3f' % (dev_acc[1], dev_acc[2]))
-
-	print("Start to predict test set")
-	predict_test(model, batch_size, test_sql, test_table, result_path, tokenizer=tokenizer)
-	print("Output path of prediction result is %s" % result_path)
+	if args.local_eval:
+		dev_acc = epoch_acc(model, batch_size, dev_sql, dev_table, dev_db, tokenizer=tokenizer)
+		print('Dev Logic Form Accuracy: %.3f, Execution Accuracy: %.3f' % (dev_acc[1], dev_acc[2]))
+	else:
+		print("Start to predict test set")
+		predict_test(model, batch_size, test_sql, test_table, result_path, tokenizer=tokenizer)
+		print("Output path of prediction result is %s" % result_path)

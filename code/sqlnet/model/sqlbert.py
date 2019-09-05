@@ -241,8 +241,9 @@ class SQLBert(BertPreTrainedModel):
 			sel_num = max(1, sel_num_pred[b])
 			sel_idx_sorted = sel_x_agg_idx[b]
 
+			cur_query['agg'] = []
 			cur_query['cond_conn_op'] = where_conn_pred[b]
-			cur_query['agg'], cur_query['sel'], = [], []
+			cur_query['sel'] = []
 			for idx in sel_idx_sorted:
 				if len(cur_query['sel']) == sel_num:
 					break
