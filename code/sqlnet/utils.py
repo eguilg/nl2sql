@@ -4,13 +4,14 @@ import numpy as np
 from tqdm import tqdm
 from sqlnet.model.sqlbert import SQLBert
 import torch
-from sqlnet.strPreprocess import strPreProcess
+from sqlnet.strPreprocess import *
 from fuzzywuzzy import process
 from fuzzywuzzy.utils import StringProcessor
 import copy
 from sqlnet.diff2 import extact_sort
+from sqlnet.diff2 import digit_distance_search
 from functools import lru_cache
-
+import re
 
 @lru_cache(None)
 def my_scorer(t, c):
@@ -30,15 +31,30 @@ def my_process(s):
 	return string_out
 
 
-def pos_in_tokens(target_str, tokens):
+def pos_in_tokens(target_str, tokens, type = None, header = None):
 	if not tokens:
 		return -1, -1
 	tlen = len(target_str)
+	q = ''.join(tokens).replace('##', '')
+	#header = ''.join(header).replace('##','').replace('[UNK]','')
 	ngrams = []
 	for l in range(max(1, tlen - 25), min(tlen + 5, len(tokens))):
 		ngrams.append(l)
-
 	candidates = {}
+	unit_flag = 0
+	if type =='real':
+		units = re.findall(r'[(（/-](.*)[)）]',str(header))
+		if units:
+			unit = units[0]
+			unit_keys = re.findall(r'[百千万亿]{1,}',unit)
+			if unit_keys:
+				unit_flag = 1
+				unit_key = unit_keys[0]
+				#print('--unit--',unit_key, target_str)
+				target_str = target_str + unit_key
+				target_str = strPreProcess(target_str).replace('-', '')
+				target_str = unit_convert(target_str)
+				#print('--target_str--', target_str, header)
 	for l in ngrams:
 		cur_idx = 0
 		while cur_idx <= len(tokens) - l:
@@ -57,12 +73,28 @@ def pos_in_tokens(target_str, tokens):
 				cur_str = cur_str.replace('[UNK]', '')
 			if '-' in cur_str :
 				cur_str = cur_str.replace('-', '')
+			if unit_flag:
+				cur_str = unit_convert(cur_str)
 			candidates[cur_str] = (st, ed)
 			cur_idx += 1
 	if list(candidates.keys()) is None or len(list(candidates.keys())) == 0:
 		print('-----testnone----',target_str, tokens,ngrams)
 		return -1, -1
-	target_str = strPreProcess(target_str).replace('-', '')
+	'''
+	if type =='real':
+		units = re.findall(r'[(（](.*)[)）]',header)
+		if units:
+			unit = units[0]
+			unit_keys = re.findall(r'[百千万亿]{1,}',unit)
+			if unit_keys:
+				unit_key = unit_keys[0]
+				print('--unit--',unit_key, target_str)
+				target_str = target_str + unit_key
+				target_str = strPreProcess(target_str).replace('-', '')
+
+				print('--target_str--', target_str, header)
+	'''
+	target_str = target_str.replace('-', '')
 	resultsf = process.extract(target_str, list(candidates.keys()), limit=10, processor=my_process, scorer=my_scorer)
 	results = extact_sort(target_str, list(candidates.keys()), limit=10)
 	if not results or not resultsf:
@@ -75,22 +107,23 @@ def pos_in_tokens(target_str, tokens):
 	else:
 		cscore = dcscore
 		chosen = dchosen
+
 	if cscore !=100:
+		pass
 		#q = ''.join(tokens).replace('##','')
 		#score = '%d'%(cscore)
-		pass
-		#with open("F:\\天池比赛\\nl2sql_test_20190618\\log.txt", "a", encoding='utf-8') as fw:
-		#	fw.write(str(chosen + '-----' + target_str + '---'+score +'--'+ q +'\n'+'\n'))
+		#with open("F:\\天池比赛\\nl2sql_test_20190618\\log3.txt", "a", encoding='utf-8') as fw:
+			#fw.write(str(chosen + '-----' + target_str + '---'+score +'--'+ q +'\n'+'\n'))
 
-	if cscore <= 5:
-		'''
+	if cscore <= 50:
 		q = ''.join(tokens).replace('##','')
 		score = '%d'%(cscore)
-		with open("F:\\天池比赛\\nl2sql_test_20190618\\log.txt", "a", encoding='utf-8') as fw:
-			fw.write(str(chosen + '-----' + target_str + '---'+score +'--'+ q +'\n'+'\n'))
-		'''
+		#with open("F:\\天池比赛\\nl2sql_test_20190618\\log3.txt", "a", encoding='utf-8') as fw:
+			#fw.write(str(chosen + '-----' + target_str + '---'+score +'--'+ q +'\n'+'\n'))
 		return -1, -1
 	return candidates[chosen]
+	#return cscore, chosen
+
 
 
 def load_data(sql_paths, table_paths, use_small=False):
@@ -347,7 +380,7 @@ def generate_gt_where_seq_test(q, gt_cond_seq):
 	return ret_seq
 
 
-def gen_bert_labels(q_seq, q_lens, sel_col_nums, where_col_nums, ans_seq, gt_cond_seq):
+def gen_bert_labels(q_seq, q_lens, sel_col_nums, where_col_nums, ans_seq, gt_cond_seq, header_type, col_seq):
 	q_max_len = max(q_lens)
 	sel_col_max_len = max(sel_col_nums)
 	where_col_max_len = max(where_col_nums) #2col
@@ -383,7 +416,7 @@ def gen_bert_labels(q_seq, q_lens, sel_col_nums, where_col_nums, ans_seq, gt_con
 			col_idx = 2 * cond[0] + col_cond_count[cond[0]] % 2
 			where_op_label[b][col_idx] = cond[1]
 			where_col_label[b][col_idx] += mass
-			s, e = pos_in_tokens(cond[2], q_seq[b])
+			s, e = pos_in_tokens(cond[2], q_seq[b], header_type[b][cond[0]], col_seq[b][cond[0]])
 			if s >= 0:
 				s = min(s, q_lens[b] - 1)
 				e = min(e - 1, q_lens[b] - 1)
@@ -442,7 +475,7 @@ def epoch_train(model, optimizer, batch_size, sql_data, table_data, tokenizer=No
 			logits = model.forward(bert_inputs)  # condconn_logits, condop_logits, sel_agg_logits, q2col_logits
 
 			# gen label
-			labels = gen_bert_labels(q_seq, q_lens, sel_col_nums, where_col_nums, ans_seq, gt_cond_seq)
+			labels = gen_bert_labels(q_seq, q_lens, sel_col_nums, where_col_nums, ans_seq, gt_cond_seq, header_type, col_seq)
 			# q_seq  (12,q_lens) 问题内容
 			# q_lens  (12,1)问题长度
 			# sel_col_nums (12,1) col 长度

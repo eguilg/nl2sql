@@ -15,12 +15,13 @@ from django.utils import timezone
 def strPreProcess(question):
     value = question
     try:
-        if re.search(r'为负值|为负', value):
-            value = re.sub(r'为负值|为负', '小于0', value)
-        if re.search(r'为正值|为正', value):
-            value = re.sub(r'为正值|为正', '大于0', value)
+        if re.search(r'为负值|为负|是负', value):
+            value = re.sub(r'为负值|为负|是负', '小于0', value)
+        if re.search(r'为正值|为正|是正', value):
+            value = re.sub(r'为正值|为正|是正', '大于0', value)
         # X.x块钱  X毛钱
         value = value.replace('块钱', '块')
+        value = value.replace('千瓦', 'kw')
         patten_money = re.compile(r'[零|一|幺|二|两|三|四|五|六|七|八|九|十|百]{1,}点[零|一|幺|二|两|三|四|五|六|七|八|九|十|百]{1,}')
         k = patten_money.findall(value)
         if k:
@@ -59,15 +60,47 @@ def strPreProcess(question):
 #            print('kmonthday',kmonthday)
 
         #更改中文数字--阿拉伯数字
-        mm = re.findall(r'[123456789〇零一幺二两三四五六七八九十百千万]{2,}',value)
+        mm = re.findall(r'[〇零一幺二两三四五六七八九十百千]{2,}',value)
         if mm:
             for item in mm:
                 v, r = chinese_to_digits(item)
                 if r ==1 and v//10 + 1 !=len(item):
                     v = str(v).zfill(len(item) - v//10)
                 value = value.replace(item, str(v),1)
+        mmd = re.findall(r'123456789千]{2,}',value)
+        if mmd:
+            for item in mmd:
+                v, r = chinese_to_digits(item)
+                value = value.replace(item, str(v), 1)
 
-        mm2 = re.findall(r'[〇零一幺二两三四五六七八九十百千]{1,}[倍|个|元|人|名|位|周|亿|以上|年]', value)
+        mmm = re.findall(r'[一二两三四五六七八九123456789]{1,}万[一二两三四五六七八九123456789]',value)
+        if mmm:
+            for item in mmm:
+                sv = item.replace('万','')
+                v,r = chinese_to_digits(sv)
+                value = value.replace(item, str(v*1000), 1)
+                print('--mmm--',mmm,value)
+        '''
+        mmw  = re.findall(r'[一幺二两三四五六七八九十]万',value)
+        if mmw:
+            for item in mmw:
+                v, r = chinese_to_digits(item)
+                value = re.sub(item, str(v), value)
+        mmy = re.findall(r'[一幺二两三四五六七八九十百]亿', value)
+        if mmy:
+            for item in mmy:
+                v, r = chinese_to_digits(item)
+                value = re.sub(item, str(v), value)
+
+        mmf = re.findall(r'\d*\.?\d+[百千万亿]{1,}',value)
+        if mmf:
+            for item in mmf:
+                v, r = chinese_to_digits(item)
+                v_item = re.sub(r'[百千万亿]{1,}','',item)
+                v =float(v_item) * r
+                value = re.sub(item, str(v), value)
+        '''
+        mm2 = re.findall(r'[〇零一幺二两三四五六七八九十百千]{1,}[倍|个|元|人|名|位|周|亿|以上|年|盒|册|天|集|宗]', value)
         if mm2:
             for item in mm2:
                 mm22 = re.findall(r'[〇零一幺二两三四五六七八九十百千]{1,}', item)
@@ -109,7 +142,7 @@ def strPreProcess(question):
                     value = re.sub(str(item), str(item_t), value)
                 #print('百分点-ala', items_se, value)
 
-        mm3 = re.findall(r'[大于|小于|前|超过][〇零一幺二两三四五六七八九十百千]{1,}', value)
+        mm3 = re.findall(r'[大于|小于|前|超过|第|破][〇零一幺二两三四五六七八九十百千]{1,}', value)
         if mm3:
             for item in mm3:
                 mm33 = re.findall(r'[〇零一幺二两三四五六七八九十百千]{1,}', item)
@@ -117,7 +150,21 @@ def strPreProcess(question):
                     v3, r3 = chinese_to_digits(item2)
                     itemvalue = item.replace(item2, str(v3), 1)
                 # v, r = chinese_to_digits(item)
+
                 value = value.replace(item, itemvalue, 1)
+
+
+        mm4 = re.findall(r'[排名|排行|达到|排在|排]{1,}前[0123456789]{1,}', value)
+        if mm4:
+
+            for item in mm4:
+                #print('qian_val',item,value)
+                v = re.sub(r'[排名|排行|达到|排在|排]{1,}前','',item)
+                s1 = item.replace('前', '大于', 1)
+                vs = s1.replace(v,str(int(v)+1),1)
+                value = value.replace(item, vs, 1)
+                #print('--前n--',item,value)
+
 
         # 更改中文年份并补充完整
         pattern_date1 = re.compile(r'(\d{2,4}年)')
@@ -172,7 +219,7 @@ def strPreProcess(question):
             value = value.replace('1线', '一线')
 
     except Exception as exc:
-        print(exc)
+        print('strPreProcess_error', exc)
 
     return value
 
@@ -182,6 +229,7 @@ def chinese_to_digits(uchars_chinese):
     total = 0
 
     common_used_numerals_tmp = {
+        '0': 0,
         '1': 1,
         '2': 2,
         '3': 3,
@@ -207,7 +255,11 @@ def chinese_to_digits(uchars_chinese):
         '十': 10,
         '百': 100,
         '千': 1000,
-        '万': 10000
+        '万': 10000,
+        '百万': 1000000,
+        '千万': 10000000,
+        '亿': 100000000,
+        '百亿': 10000000000
     }
     r = 1  # 表示单位：个十百千...
     try:
@@ -230,13 +282,15 @@ def chinese_to_digits(uchars_chinese):
                         r = val
                     else:
                         r = r * val
+                elif val == 0 and i != 0:
+                    r = r * 10
                 elif r == 1:
                     total = total + pow(10,len(uchars_chinese) - i - 1) * val
                 else:
                     total = total + r * val
     except Exception as exc:
         print(uchars_chinese)
-        print(exc)
+        print('chinese_to_digits_error',exc)
     return total, r
 
 
@@ -317,7 +371,34 @@ def str_to_date(date_str):
         pass
 
     return None
+def unit_convert(ques):
+    value = ques
+    try:
+        mmw = re.findall(r'[一幺二两三四五六七八九十]万', value)
+        if mmw:
+            for item in mmw:
+                v, r = chinese_to_digits(item)
+                value = re.sub(item, str(v), value)
+        mmy = re.findall(r'[一幺二两三四五六七八九十百]亿', value)
+        if mmy:
+            for item in mmy:
+                v, r = chinese_to_digits(item)
+                value = re.sub(item, str(v), value)
 
+        mmf = re.findall(r'\d*\.?\d+万|\d*\.?\d+百万|\d*\.?\d+千万|\d*\.?\d+亿', value)
+        if mmf:
+
+            for item in mmf:
+                #mmf_v = re.sub(r'万|百万|千万|亿','',item)
+                #mmf_r = re.sub(mmf_v,'',item)
+                v, r = chinese_to_digits(item)
+                #print('dig', mmf,v,'--',r)
+                value = re.sub(item, str(v), value)
+
+    except Exception as exc:
+        print('unit_convert_error',exc,'---',ques)
+
+    return value
 
 str_test1 = '11和2012年,19年1月7日到十九日周票房超过一千万的影投公司,幺九年一月十四到十九播放数大于三千万的剧集,18年同期'
 str_test2 = '市值是不超过百亿元,股价高于十块钱,增长超过两块五,或者上涨幅度大于百分之八的股票'
