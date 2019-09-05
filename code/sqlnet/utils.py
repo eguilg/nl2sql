@@ -615,28 +615,10 @@ def post_process(pred, sql_data, table_data, perm, st, ed):
 					col_data.append(r[col_idx])
 			if not col_data:
 				continue
-
-			# if table['types'][col_idx] == 'real':
-			# 	col_data = list(map(str, col_data))
-
-			col_val = strPreProcess(col_val).replace('-', '')
-			resultsf = process.extract(col_val, col_data, limit=10, processor=my_process, scorer=my_scorer)
-			results = extact_sort(col_val, col_data, limit=10)
-			if not results or not resultsf:
-				return -1, -1
-			dchosen, dcscore = results[0]
-			fchosen, fcscore = resultsf[0]
-			if fcscore > dcscore:
-				cscore = fcscore
-				chosen = fchosen
-			else:
-				cscore = dcscore
-				chosen = dchosen
-
-			# match, score = process.extractOne(col_val, col_data, processor=my_process)
-			if cscore == 0:
+			match, score = process.extractOne(col_val, col_data, processor=my_process)
+			if score == 0:
 				continue
-			pred[i - st]['conds'][c][2] = chosen
+			pred[i - st]['conds'][c][2] = match
 	return pred
 
 
