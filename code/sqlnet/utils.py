@@ -35,26 +35,36 @@ def pos_in_tokens(target_str, tokens, type = None, header = None):
 	if not tokens:
 		return -1, -1
 	tlen = len(target_str)
+	copy_target_str = target_str
 	q = ''.join(tokens).replace('##', '')
-	#header = ''.join(header).replace('##','').replace('[UNK]','')
+	header = ''.join(header).replace('##','').replace('[UNK]','')
 	ngrams = []
 	for l in range(max(1, tlen - 25), min(tlen + 5, len(tokens))):
 		ngrams.append(l)
 	candidates = {}
 	unit_flag = 0
+	tback_flag = 0
+	unit_r = 0
 	if type =='real':
-		units = re.findall(r'[(（/-](.*)[)）]',str(header))
-		if units:
-			unit = units[0]
-			unit_keys = re.findall(r'[百千万亿]{1,}',unit)
+		units = re.findall(r'[(（](.*)[)）]',str(header))
+		if True:
+			#unit = units[0]
+			#unit_keys = re.findall(r'[百千万亿]{1,}',str(header))
+			unit_keys = re.findall(r'万|百万|千万|亿', str(header))
+			unit_other = re.findall(r'元|米|平', str(header))
 			if unit_keys:
-				unit_flag = 1
+				unit_flag = 1        #col中有[万|百万|千万|亿]单位，
 				unit_key = unit_keys[0]
+				v, unit_r = chinese_to_digits(unit_key)
 				#print('--unit--',unit_key, target_str)
 				target_str = target_str + unit_key
 				target_str = strPreProcess(target_str).replace('-', '')
 				target_str = unit_convert(target_str)
 				#print('--target_str--', target_str, header)
+			elif unit_other:
+				unit_flag = 2    #col中有[元|米|平] 单位为个数
+			else:
+				unit_flag = 3    # 无单位，可能为个数，可能与ques中单位相同
 	for l in ngrams:
 		cur_idx = 0
 		while cur_idx <= len(tokens) - l:
@@ -73,10 +83,29 @@ def pos_in_tokens(target_str, tokens, type = None, header = None):
 				cur_str = cur_str.replace('[UNK]', '')
 			if '-' in cur_str :
 				cur_str = cur_str.replace('-', '')
-			if unit_flag:
+
+
+			if unit_flag == 1:
+				if cur_str == target_str: #ques 无单位 默认为个数 target_str为unit_convert()后的
+					cur_str = str(int(cur_str)/unit_r)
+					unit_flag = 0 #target_str回到初始状态，
+					tback_flag = 0
+				elif cur_str == copy_target_str: #ques 无单位 默认与target_str 相同
+					tback_flag = 1 #标志位 默认与target_str 单位相同
+				else:
+					cur_str = unit_convert(cur_str)
+
+			elif unit_flag == 2:
 				cur_str = unit_convert(cur_str)
+			elif unit_flag == 3:
+				if unit_convert(cur_str) == target_str:
+					cur_str = unit_convert(cur_str)
+
 			candidates[cur_str] = (st, ed)
 			cur_idx += 1
+	if tback_flag:
+		target_str = copy_target_str
+
 	if list(candidates.keys()) is None or len(list(candidates.keys())) == 0:
 		print('-----testnone----',target_str, tokens,ngrams)
 		return -1, -1
@@ -94,7 +123,7 @@ def pos_in_tokens(target_str, tokens, type = None, header = None):
 
 				print('--target_str--', target_str, header)
 	'''
-	target_str = target_str.replace('-', '')
+	target_str = str(target_str).replace('-', '')
 	resultsf = process.extract(target_str, list(candidates.keys()), limit=10, processor=my_process, scorer=my_scorer)
 	results = extact_sort(target_str, list(candidates.keys()), limit=10)
 	if not results or not resultsf:
@@ -119,8 +148,8 @@ def pos_in_tokens(target_str, tokens, type = None, header = None):
 		q = ''.join(tokens).replace('##','')
 		score = '%d'%(cscore)
 		#with open("F:\\天池比赛\\nl2sql_test_20190618\\log3.txt", "a", encoding='utf-8') as fw:
-			#fw.write(str(chosen + '-----' + target_str + '---'+score +'--'+ q +'\n'+'\n'))
-		return -1, -1
+			#fw.write(str(type + '  '+ header + ' ** '+chosen + '-----' + target_str + '---'+score +'--'+ q +'\n'+'\n'))
+		#return -1, -1
 	return candidates[chosen]
 	#return cscore, chosen
 
@@ -551,7 +580,6 @@ def epoch_acc(model, batch_size, sql_data, table_data, db_path, tokenizer=None):
 	badcase = 0
 	one_acc_num, tot_acc_num, ex_acc_num = 0.0, 0.0, 0.0
 	total_error_cases = []
-	total_gt_cases = []
 	for st in tqdm(range(len(sql_data) // batch_size + 1)):
 		ed = (st + 1) * batch_size if (st + 1) * batch_size < len(perm) else len(perm)
 		st = st * batch_size
@@ -576,9 +604,9 @@ def epoch_acc(model, batch_size, sql_data, table_data, db_path, tokenizer=None):
 
 		pred_queries_post = post_process(pred_queries, sql_data, table_data, perm, st, ed)
 		one_err, tot_err, error_idxs = check_acc(raw_data, pred_queries_post, query_gt)
-		error_cases, gt_cases = gen_batch_error_cases(error_idxs, q_seq, query_gt, pred_queries_post, pred_queries, raw_data)
-		total_error_cases.extend(error_cases)
-		total_gt_cases.extend(gt_cases)
+
+		total_error_cases.extend(
+			gen_batch_error_cases(error_idxs, q_seq, query_gt, pred_queries_post, pred_queries, raw_data))
 
 		# except:
 		# 	badcase += 1
@@ -596,7 +624,7 @@ def epoch_acc(model, batch_size, sql_data, table_data, db_path, tokenizer=None):
 			except:
 				ret_pred = None
 			ex_acc_num += (ret_gt == ret_pred)
-	save_error_case(total_error_cases, total_gt_cases)
+	# save_error_case(total_error_cases)
 	return one_acc_num / len(sql_data), tot_acc_num / len(sql_data), ex_acc_num / len(sql_data)
 
 
@@ -700,34 +728,22 @@ def check_acc(vis_info, pred_queries, gt_queries):
 
 def gen_batch_error_cases(error_idxs, q_seq, query_gt, pred_queries_post, pred_queries, raw_data):
 	error_cases = []
-	gt_cases = []
 	for idx in error_idxs:
 		single_error = {}
-		single_gt = {}
 		single_error['q_raw'] = raw_data[idx][0]
 		single_error['q_normed'] = strPreProcess(single_error['q_raw'])
-		single_gt['q_raw'] = raw_data[idx][0]
-		single_gt['q_normed'] = strPreProcess(single_error['q_raw'])
+		single_error['gt'] = query_gt[idx]
+		single_error['pred'] = copy.deepcopy(pred_queries_post[idx])
+		for i in range(len(single_error['pred']['conds'])):
+			single_error['pred']['conds'][i].append(pred_queries[idx]['conds'][i][2])
 		single_error['cols'] = raw_data[idx][1]
-		single_gt['cols'] = raw_data[idx][1]
-		single_gt['sql'] = query_gt[idx]
-		single_error['sql'] = copy.deepcopy(pred_queries_post[idx])
-		for i in range(len(single_error['sql']['conds'])):
-			single_error['sql']['conds'][i].append(pred_queries[idx]['conds'][i][2])
-
 		error_cases.append(single_error)
-		gt_cases.append(single_gt)
-	return error_cases, gt_cases
+	return error_cases
 
 
-def save_error_case(error_case, gt_cases, dir='./log/'):
-	import os.path as osp
-	error_fn = osp.join(dir, 'error_cases.json')
-	gt_fn = osp.join(dir, 'gt_cases.json')
-	with open(error_fn, "w", encoding='utf-8') as f:
+def save_error_case(error_case, fn='./log/error_case.json'):
+	with open(fn, "w") as f:
 		json.dump(error_case, f, ensure_ascii=False, indent=4)
-	with open(gt_fn, "w", encoding='utf-8') as f:
-		json.dump(gt_cases, f, ensure_ascii=False, indent=4)
 
 
 def load_word_emb(file_name):

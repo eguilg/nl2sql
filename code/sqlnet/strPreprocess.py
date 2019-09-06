@@ -15,6 +15,9 @@ def strPreProcess(question):
         # X.x块钱  X毛钱
         value = value.replace('块钱', '块')
         value = value.replace('千瓦', 'kw')
+        value = value.replace('个', '')
+        value = value.replace('了', '')
+        value = value.replace('的', '')
         patten_money = re.compile(r'[零|一|幺|二|两|三|四|五|六|七|八|九|十|百]{1,}点[零|一|幺|二|两|三|四|五|六|七|八|九|十|百]{1,}')
         k = patten_money.findall(value)
         if k:
@@ -47,6 +50,18 @@ def strPreProcess(question):
                 maoflo = str(float(valmao)/10) + '元'
                 value = value.replace(item, maoflo, 1)
         value = value.replace('元毛', '元')
+
+        patten_jao = re.compile(r'[一二两三四五六七八九123456789]角')
+        kjao = patten_jao.findall(value)
+        if kjao:
+            for item in kjao:
+                strjao = item.replace('角', '')
+                valjao, rm = chinese_to_digits(strjao)
+
+                jaoflo = str(float(valjao) / 10) + '元'
+                value = value.replace(item, jaoflo, 1)
+
+        value = value.replace('元毛', '元')
 #        patten_datec = re.compile(r'[零|一|幺|二|两|三|四|五|六|七|八|九|十|百|0|1|2|3|4|5|6|7|8|9]{1,}月[零|一|幺|二|两|三|四|五|六|七|八|九|十|百|0|1|2|3|4|5|6|7|8|9]{,2}')
 #        kmonthday = patten_datec.findall(value)
 #        if kmonthday:
@@ -66,13 +81,20 @@ def strPreProcess(question):
                 v, r = chinese_to_digits(item)
                 value = value.replace(item, str(v), 1)
 
-        mmm = re.findall(r'[一二两三四五六七八九123456789]{1,}万[一二两三四五六七八九123456789]',value)
+        mmm = re.findall(r'[一二两三四五六七八九十123456789]{1,}万[二两三四五六七八九23456789]',value)
         if mmm:
             for item in mmm:
-                sv = item.replace('万','')
+                sv = item.replace('万', '')
                 v,r = chinese_to_digits(sv)
                 value = value.replace(item, str(v*1000), 1)
-                print('--mmm--',mmm,value)
+                #print('--mmm--',mmm,value)
+                #2万2--22000
+        mmw = re.findall(r'[一二两三四五六七八九十]万', value)
+        if mmw:
+            for item in mmw:
+                iv = item.replace('万','')
+                v, r = chinese_to_digits(iv)
+                value = re.sub(item, str(v)+'万', value)
         '''
         mmw  = re.findall(r'[一幺二两三四五六七八九十]万',value)
         if mmw:
@@ -147,12 +169,12 @@ def strPreProcess(question):
                 value = value.replace(item, itemvalue, 1)
 
 
-        mm4 = re.findall(r'[排名|排行|达到|排在|排]{1,}前[0123456789]{1,}', value)
+        mm4 = re.findall(r'[排名|排行|达到|排在|排|列|率]{1,}前[0123456789]{1,}', value)
         if mm4:
 
             for item in mm4:
                 #print('qian_val',item,value)
-                v = re.sub(r'[排名|排行|达到|排在|排]{1,}前','',item)
+                v = re.sub(r'[排名|排行|达到|排在|排|列|率]{1,}前','',item)
                 s1 = item.replace('前', '大于', 1)
                 vs = s1.replace(v,str(int(v)+1),1)
                 value = value.replace(item, vs, 1)
@@ -176,7 +198,7 @@ def strPreProcess(question):
             for item in dateList2:
                 v = str_to_date(item)
                 value = re.sub(str(item), str(v), value)
-        pattern_date3 = re.compile(r'[零|一|幺|二|两|三|四|五|六|七|八|九|十|百|0|1|2|3|4|5|6|7|8|9]{1,}月[零|一|幺|二|两|三|四|五|六|七|八|九|十|百|0|1|2|3|4|5|6|7|8|9]{1,2}')
+        pattern_date3 = re.compile(r'[零|一|幺|二|两|三|四|五|六|七|八|九|十|0|1|2|3|4|5|6|7|8|9]{1,}月[零|一|幺|二|两|三|四|五|六|七|八|九|十|0|1|2|3|4|5|6|7|8|9]{1,2}')
         date3 = pattern_date3.findall(value)
         if date3:
             nflag = 0
@@ -194,6 +216,7 @@ def strPreProcess(question):
                     nflag = 1
                 if nflag:
                     kv= str(front) + '月'+ str(end)
+                    #kv = str_to_date(kv)
                     value = value.replace(item, kv,1)
 
         pattern_date4 = re.compile(r'\d*?年[\D]{1}月')
@@ -203,6 +226,7 @@ def strPreProcess(question):
                 kitem = re.findall(r'([\D]{1})月',item)
                 k,v = chinese_to_digits(kitem[0])
                 mm = item.replace(kitem[0],str(k))
+                #mm = str_to_date(mm)
                 value = re.sub(item, mm, value)
 
         if re.search(r'1下|1共|.1元股|1线', value):
@@ -212,7 +236,7 @@ def strPreProcess(question):
             value = value.replace('1线', '一线')
 
     except Exception as exc:
-        print('strPreProcess_error', exc)
+        print('strPreProcess_error', exc,'--',value)
 
     return value
 
@@ -300,7 +324,7 @@ def str_to_date(date_str):
                 year_str = '20' + year_str
             if len(year_str) == 3:
                 year_str = '2' + year_str
-            date_date = '{}年{}月{}日'.format(year_str, month_str, day_str)
+            date_date = '{}-{}-{}日'.format(year_str, month_str, day_str)
             return date_date
 
         # 是数字 只有年月
@@ -313,7 +337,7 @@ def str_to_date(date_str):
                 year_str = '20' + year_str
             if len(year_str) == 3:
                 year_str = '2' + year_str
-            date_date = '%s年%s月' % (year_str, month_str)
+            date_date = '%s-%s月' % (year_str, month_str)
             return date_date
 
         # 以下包含汉字
@@ -331,7 +355,7 @@ def str_to_date(date_str):
                 year_str = '20' + year_str
             if len(year_str) == 3:
                 year_str = '2' + year_str
-            date_str = '%s年%s月%s日' % (year_str, month_str, day_str)
+            date_str = '%s-%s-%s日' % (year_str, month_str, day_str)
             return date_str
 
         # 只有两位
@@ -344,7 +368,7 @@ def str_to_date(date_str):
                 year_str = '20' + year_str
             if len(year_str) == 3:
                 year_str = '2' + year_str
-            date_str = '%s年%s月' % (year_str, month_str)
+            date_str = '%s-%s月' % (year_str, month_str)
             return date_str
         # 只有一位
 
@@ -362,8 +386,8 @@ def str_to_date(date_str):
         # print('处理不了的日期 %s' % date_str)
     except Exception as exc:
         pass
-
     return None
+
 def unit_convert(ques):
     value = ques
     try:
@@ -382,11 +406,11 @@ def unit_convert(ques):
         if mmf:
 
             for item in mmf:
-                #mmf_v = re.sub(r'万|百万|千万|亿','',item)
-                #mmf_r = re.sub(mmf_v,'',item)
-                v, r = chinese_to_digits(item)
+                mmf_v = re.sub(r'万|百万|千万|亿','',item)
+                mmf_r = re.sub(mmf_v,'',item)
+                v, r = chinese_to_digits(mmf_r)
                 #print('dig', mmf,v,'--',r)
-                value = re.sub(item, str(v), value)
+                value = re.sub(item, str(int(float(mmf_v)*r)), value)
 
     except Exception as exc:
         print('unit_convert_error',exc,'---',ques)

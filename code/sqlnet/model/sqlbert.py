@@ -283,7 +283,7 @@ class SQLBert(BertPreTrainedModel):
 				true_col_idx = cond_cand[0] // 2  # 每列预测两个条件
 				cons_toks = q[b][cond_cand[2]:cond_cand[3] + 1]
 				cond_str = merge_tokens(cons_toks, raw_q[b])
-
+				check = cond_str
 				'''type = real 预测的cond_str单位进行转换'''
 				#table_headers = table_data[raw_q[b]['table_id']]['header']
 				#table_types = table_data[raw_q[b]['table_id']]['types']
@@ -301,19 +301,27 @@ class SQLBert(BertPreTrainedModel):
 
 							if re.findall(unit_key, cond_str):
 								cond_str = re.sub(unit_key, '', cond_str)
-							else:
+							elif re.findall(r'[百千万亿]{1,}', cond_str):
 								try:
 									cond_v = unit_convert(cond_str)
-									cond_str = cond_v / r
+									cond_str = float(cond_v) / r
 								except Exception as exc:
-									print('gen_query_convert', exc)
-								cond_str = re.sub(r'[百千万亿]{1,}','', cond_str)
+									print('gen_query_convert', exc, cond_str, r, unit_key)
 
-							cond_str = re.sub(r'[^0123456789.-]', '', cond_str)
+
+						elif re.findall(r'[米|平|元]{1,}', unit):
+							try:
+								cond_str = unit_convert(cond_str)
+							except Exception as exc:
+								print('gen_query_convert', exc)
+						else:
+							cond_str = re.sub(r'[百千万亿]{1,}','', str(cond_str))
+
+						cond_str = re.sub(r'[^0123456789.-]', '', str(cond_str))
 					else:
 						cond_str = re.sub(r'[百千万亿]{1,}', '', cond_str)
 						cond_str = re.sub(r'[^0123456789.-]', '', cond_str)
-					print('----real----', cond_str, col_header)
+					print('----real----', cond_str,'***', check, col_header)
 
 
 				cur_query['conds'].append([true_col_idx, cond_cand[1], cond_str])
