@@ -321,7 +321,7 @@ class SQLBert(BertPreTrainedModel):
 					else:
 						cond_str = re.sub(r'[百千万亿]{1,}', '', cond_str)
 						cond_str = re.sub(r'[^0123456789.-]', '', cond_str)
-					print('----real----', cond_str,'***', check, col_header)
+					# print('----real----', cond_str,'***', check, col_header)
 
 
 				cur_query['conds'].append([true_col_idx, cond_cand[1], cond_str])
