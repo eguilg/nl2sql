@@ -580,6 +580,7 @@ def epoch_acc(model, batch_size, sql_data, table_data, db_path, tokenizer=None):
 	badcase = 0
 	one_acc_num, tot_acc_num, ex_acc_num = 0.0, 0.0, 0.0
 	total_error_cases = []
+	total_gt_cases = []
 	for st in tqdm(range(len(sql_data) // batch_size + 1)):
 		ed = (st + 1) * batch_size if (st + 1) * batch_size < len(perm) else len(perm)
 		st = st * batch_size
@@ -604,9 +605,9 @@ def epoch_acc(model, batch_size, sql_data, table_data, db_path, tokenizer=None):
 
 		pred_queries_post = post_process(pred_queries, sql_data, table_data, perm, st, ed)
 		one_err, tot_err, error_idxs = check_acc(raw_data, pred_queries_post, query_gt)
-
-		total_error_cases.extend(
-			gen_batch_error_cases(error_idxs, q_seq, query_gt, pred_queries_post, pred_queries, raw_data))
+		error_cases, gt_cases = gen_batch_error_cases(error_idxs, q_seq, query_gt, pred_queries_post, pred_queries, raw_data)
+		total_error_cases.extend(error_cases)
+		total_gt_cases.extend(gt_cases)
 
 		# except:
 		# 	badcase += 1
@@ -624,7 +625,7 @@ def epoch_acc(model, batch_size, sql_data, table_data, db_path, tokenizer=None):
 			except:
 				ret_pred = None
 			ex_acc_num += (ret_gt == ret_pred)
-	# save_error_case(total_error_cases)
+	save_error_case(total_error_cases, total_gt_cases)
 	return one_acc_num / len(sql_data), tot_acc_num / len(sql_data), ex_acc_num / len(sql_data)
 
 
@@ -728,22 +729,34 @@ def check_acc(vis_info, pred_queries, gt_queries):
 
 def gen_batch_error_cases(error_idxs, q_seq, query_gt, pred_queries_post, pred_queries, raw_data):
 	error_cases = []
+	gt_cases = []
 	for idx in error_idxs:
 		single_error = {}
+		single_gt = {}
 		single_error['q_raw'] = raw_data[idx][0]
 		single_error['q_normed'] = strPreProcess(single_error['q_raw'])
-		single_error['gt'] = query_gt[idx]
-		single_error['pred'] = copy.deepcopy(pred_queries_post[idx])
-		for i in range(len(single_error['pred']['conds'])):
-			single_error['pred']['conds'][i].append(pred_queries[idx]['conds'][i][2])
+		single_gt['q_raw'] = raw_data[idx][0]
+		single_gt['q_normed'] = strPreProcess(single_error['q_raw'])
 		single_error['cols'] = raw_data[idx][1]
+		single_gt['cols'] = raw_data[idx][1]
+		single_gt['sql'] = query_gt[idx]
+		single_error['sql'] = copy.deepcopy(pred_queries_post[idx])
+		for i in range(len(single_error['sql']['conds'])):
+			single_error['sql']['conds'][i].append(pred_queries[idx]['conds'][i][2])
+
 		error_cases.append(single_error)
-	return error_cases
+		gt_cases.append(single_gt)
+	return error_cases, gt_cases
 
 
-def save_error_case(error_case, fn='./log/error_case.json'):
-	with open(fn, "w") as f:
+def save_error_case(error_case, gt_cases, dir='./log/'):
+	import os.path as osp
+	error_fn = osp.join(dir, 'error_cases.json')
+	gt_fn = osp.join(dir, 'gt_cases.json')
+	with open(error_fn, "w", encoding='utf-8') as f:
 		json.dump(error_case, f, ensure_ascii=False, indent=4)
+	with open(gt_fn, "w", encoding='utf-8') as f:
+		json.dump(gt_cases, f, ensure_ascii=False, indent=4)
 
 
 def load_word_emb(file_name):
