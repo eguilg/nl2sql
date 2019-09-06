@@ -16,8 +16,7 @@ def strPreProcess(question):
         value = value.replace('块钱', '块')
         value = value.replace('千瓦', 'kw')
         value = value.replace('个', '')
-        value = value.replace('了', '')
-        value = value.replace('的', '')
+        value = value.replace(' ', '')
         patten_money = re.compile(r'[零|一|幺|二|两|三|四|五|六|七|八|九|十|百]{1,}点[零|一|幺|二|两|三|四|五|六|七|八|九|十|百]{1,}')
         k = patten_money.findall(value)
         if k:

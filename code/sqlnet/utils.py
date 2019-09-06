@@ -603,7 +603,8 @@ def epoch_acc(model, batch_size, sql_data, table_data, db_path, tokenizer=None):
 				# generate predicted format
 				pred_queries = model.gen_query(score, q_seq, col_seq, raw_q_seq)
 
-		pred_queries_post = post_process(pred_queries, sql_data, table_data, perm, st, ed)
+		pred_queries_post = copy.deepcopy(pred_queries)
+		pred_queries_post = post_process(pred_queries_post, sql_data, table_data, perm, st, ed)
 		one_err, tot_err, error_idxs = check_acc(raw_data, pred_queries_post, query_gt)
 		error_cases, gt_cases = gen_batch_error_cases(error_idxs, q_seq, query_gt, pred_queries_post, pred_queries, raw_data)
 		total_error_cases.extend(error_cases)
@@ -617,7 +618,7 @@ def epoch_acc(model, batch_size, sql_data, table_data, db_path, tokenizer=None):
 		tot_acc_num += (ed - st - tot_err)
 
 		# Execution Accuracy
-		for sql_gt, sql_pred, tid in zip(query_gt, pred_queries, table_ids):
+		for sql_gt, sql_pred, tid in zip(query_gt, pred_queries_post, table_ids):
 			ret_gt = engine.execute(tid, sql_gt['sel'], sql_gt['agg'], sql_gt['conds'], sql_gt['cond_conn_op'])
 			try:
 				ret_pred = engine.execute(tid, sql_pred['sel'], sql_pred['agg'], sql_pred['conds'],
@@ -638,29 +639,30 @@ def post_process(pred, sql_data, table_data, perm, st, ed):
 			col_val = pred[i - st]['conds'][c][2]
 			if col_idx > len(table['header']) or col_val == "" or table['types'][col_idx] == 'real':
 				continue
+
 			col_data = []
 			for r in table['rows']:
-				if col_idx < len(r):
+				if col_idx < len(r) and r[col_idx] not in {'None', 'none'}:#, 'N/A', '-', '/', ''}:
 					col_data.append(r[col_idx])
 			if not col_data:
 				continue
+
+			is_real = True
+			try:
+				_ = list(map(float, col_data))
+			except:
+				is_real = False
+			if is_real:
+				continue
+
 			match, score = process.extractOne(col_val, col_data, processor=my_process)
-			if score == 0:
+			if score < 30:
 				continue
 			pred[i - st]['conds'][c][2] = match
 	return pred
 
 
 def check_acc(vis_info, pred_queries, gt_queries):
-	def gen_cond_str(conds, header):
-		COND_OPS = ['>', '<', '==', '!=']
-		if len(conds) == 0:
-			return 'None'
-		cond_str = []
-		for cond in conds:
-			cond_str.append(header[cond[0]] + ' ' +
-							COND_OPS[cond[1]] + ' ' + cond[2].lower())
-		return 'WHERE ' + ' AND '.join(cond_str)
 
 	tot_err = sel_num_err = agg_err = sel_err = 0.0
 	cond_num_err = cond_col_err = cond_op_err = cond_val_err = cond_rela_err = 0.0
@@ -722,9 +724,8 @@ def check_acc(vis_info, pred_queries, gt_queries):
 		if not good:
 			tot_err += 1
 			bad_sample_idxs.append(b)
-
-	return np.array((sel_num_err, sel_err, agg_err, cond_num_err, cond_col_err, cond_op_err, cond_val_err,
-					 cond_rela_err)), tot_err, bad_sample_idxs
+	return np.array(
+		(sel_num_err, sel_err, agg_err, cond_num_err, cond_col_err, cond_op_err, cond_val_err, cond_rela_err)), tot_err, bad_sample_idxs
 
 
 def gen_batch_error_cases(error_idxs, q_seq, query_gt, pred_queries_post, pred_queries, raw_data):
