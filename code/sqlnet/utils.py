@@ -46,19 +46,19 @@ def pos_in_tokens(target_str, tokens, type = None, header = None):
 	tback_flag = 0
 	unit_r = 0
 	if type =='real':
-		units = re.findall(r'[(（](.*)[)）]',str(header))
-		if True:
-			#unit = units[0]
+		units = re.findall(r'[(（-](.*)',str(header))
+		if units:
+			unit = units[0]
 			#unit_keys = re.findall(r'[百千万亿]{1,}',str(header))
-			unit_keys = re.findall(r'万|百万|千万|亿', str(header))
-			unit_other = re.findall(r'元|米|平', str(header))
+			unit_keys = re.findall(r'百万|千万|万|百亿|千亿|万亿|亿', unit)
+			unit_other = re.findall(r'元|米|平|套|枚|册|张|辆|个|股|户|m²|亩|人', unit)
 			if unit_keys:
 				unit_flag = 1        #col中有[万|百万|千万|亿]单位，
 				unit_key = unit_keys[0]
 				v, unit_r = chinese_to_digits(unit_key)
 				#print('--unit--',unit_key, target_str)
 				target_str = target_str + unit_key
-				target_str = strPreProcess(target_str).replace('-', '')
+				target_str = strPreProcess(target_str)
 				target_str = unit_convert(target_str)
 				#print('--target_str--', target_str, header)
 			elif unit_other:
@@ -84,14 +84,13 @@ def pos_in_tokens(target_str, tokens, type = None, header = None):
 			if '-' in cur_str :
 				cur_str = cur_str.replace('-', '')
 
-
 			if unit_flag == 1:
 				if cur_str == target_str: #ques 无单位 默认为个数 target_str为unit_convert()后的
 					cur_str = str(int(cur_str)/unit_r)
 					unit_flag = 0 #target_str回到初始状态，
 					tback_flag = 0
-				elif cur_str == copy_target_str: #ques 无单位 默认与target_str 相同
-					tback_flag = 1 #标志位 默认与target_str 单位相同
+				# elif cur_str == copy_target_str: #ques 无单位 默认与target_str 相同
+				# 	tback_flag = 1 #标志位 默认与target_str 单位相同
 				else:
 					cur_str = unit_convert(cur_str)
 
@@ -100,29 +99,20 @@ def pos_in_tokens(target_str, tokens, type = None, header = None):
 			elif unit_flag == 3:
 				if unit_convert(cur_str) == target_str:
 					cur_str = unit_convert(cur_str)
-
+			if type == 'text':
+				for item in list(thesaurus_dic.keys()):
+					if item in cur_str:
+						cur_str_the = re.sub(item,thesaurus_dic[item],cur_str)
+						candidates[cur_str_the] = (st, ed)
 			candidates[cur_str] = (st, ed)
 			cur_idx += 1
-	if tback_flag:
-		target_str = copy_target_str
+	# if tback_flag:
+	# 	target_str = copy_target_str
 
 	if list(candidates.keys()) is None or len(list(candidates.keys())) == 0:
 		print('-----testnone----',target_str, tokens,ngrams)
 		return -1, -1
-	'''
-	if type =='real':
-		units = re.findall(r'[(（](.*)[)）]',header)
-		if units:
-			unit = units[0]
-			unit_keys = re.findall(r'[百千万亿]{1,}',unit)
-			if unit_keys:
-				unit_key = unit_keys[0]
-				print('--unit--',unit_key, target_str)
-				target_str = target_str + unit_key
-				target_str = strPreProcess(target_str).replace('-', '')
 
-				print('--target_str--', target_str, header)
-	'''
 	target_str = str(target_str).replace('-', '')
 	resultsf = process.extract(target_str, list(candidates.keys()), limit=10, processor=my_process, scorer=my_scorer)
 	results = extact_sort(target_str, list(candidates.keys()), limit=10)
@@ -572,7 +562,6 @@ def predict_test(model, batch_size, sql_data, table_data, output_path, tokenizer
 		# fw.writelines(json.dumps(sql_pred,ensure_ascii=False).encode('utf-8')+'\n')
 	fw.close()
 
-
 def epoch_acc(model, batch_size, sql_data, table_data, db_path, tokenizer=None):
 	engine = DBEngine(db_path)
 	model.eval()
@@ -655,7 +644,17 @@ def post_process(pred, sql_data, table_data, perm, st, ed):
 			if is_real:
 				continue
 
+			score_c = 0
+			for item in list(thesaurus_dic.keys()):
+				if item in col_val:
+					col_val_the = re.sub(item, thesaurus_dic[item], col_val)
+					match_c, score_c = process.extractOne(col_val_the, col_data, processor=my_process)
+
 			match, score = process.extractOne(col_val, col_data, processor=my_process)
+			if score_c > score:
+				match = match_c
+				score = score_c
+
 			if score < 30:
 				continue
 			pred[i - st]['conds'][c][2] = match
@@ -750,7 +749,7 @@ def gen_batch_error_cases(error_idxs, q_seq, query_gt, pred_queries_post, pred_q
 	return error_cases, gt_cases
 
 
-def save_error_case(error_case, gt_cases, dir='./log/'):
+def save_error_case(error_case, gt_cases, dir='./nl2sql/log/'):
 	import os.path as osp
 	error_fn = osp.join(dir, 'error_cases.json')
 	gt_fn = osp.join(dir, 'gt_cases.json')
@@ -773,3 +772,36 @@ def load_word_emb(file_name):
 	#         if info[0].lower() not in ret:
 	#             ret[info[0]] = np.array([float(x) for x in info[1:]])
 	return ret
+
+
+thesaurus_dic = {
+	'没有要求': '不限',
+	'达标': '合格',
+	'不': '否',
+	'鄂': '湖北',
+	'豫': '河南',
+	'皖': '安徽',
+	'冀': '河北',
+	'inter': '因特尔',
+	'samsung': '三星',
+	'芒果TV': '湖南卫视',
+	'湖南台': '芒果TV',
+	'企鹅公司': '腾讯',
+	'鹅厂': '腾讯',
+	'宁': '南京',
+	'Youku': '优酷',
+	'荔枝台': '江苏卫视',
+	'周一': '星期一',
+	'周二': '星期二',
+	'周三': '星期三',
+	'周四': '星期四',
+	'周五': '星期五',
+	'周六': '星期六',
+	'周日': '星期天',
+	'周天': '星期天',
+	'电视剧频道': '中央台八套',
+	'沪': '上海',
+	'闽': '福建',
+	'增持': '买入'
+
+}

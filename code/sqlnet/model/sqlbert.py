@@ -291,17 +291,19 @@ class SQLBert(BertPreTrainedModel):
 
 					col_header = table_headers[b][true_col_idx]
 					#print('----real----', cond_str, col_header)
-					units = re.findall(r'[(（/-](.*)[)）]', str(col_header))
+					units = re.findall(r'[(（/-](.*)', str(col_header))
+					#unit_keys = re.findall(r'万|百万|千万|亿', str(col_header))
 					if units:
 						unit = units[0]
-						unit_keys = re.findall(r'[百千万亿]{1,}', unit)
+						unit_keys = re.findall(r'百万|千万|万|百亿|千亿|万亿|亿', unit)
+						#unit_keys = re.findall(r'[百千万亿]{1,}', unit)
 						if unit_keys:
 							unit_key = unit_keys[0]
 							u_v, r = chinese_to_digits(unit_key)
 
 							if re.findall(unit_key, cond_str):
 								cond_str = re.sub(unit_key, '', cond_str)
-							elif re.findall(r'[百千万亿]{1,}', cond_str):
+							elif re.findall(r'百万|千万|万|百亿|千亿|万亿|亿', cond_str):
 								try:
 									cond_v = unit_convert(cond_str)
 									cond_str = float(cond_v) / r
@@ -309,7 +311,7 @@ class SQLBert(BertPreTrainedModel):
 									print('gen_query_convert', exc, cond_str, r, unit_key)
 
 
-						elif re.findall(r'[米|平|元]{1,}', unit):
+						elif re.findall(r'元|米|平|套|枚|册|张|辆|个|股|户|m²|亩|人', unit):
 							try:
 								cond_str = unit_convert(cond_str)
 							except Exception as exc:
