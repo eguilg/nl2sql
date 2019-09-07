@@ -154,6 +154,36 @@ def pos_in_tokens(target_str, tokens, type = None, header = None):
 	#return cscore, chosen
 
 
+def justify_col_type(table):
+	def get_real_col_type(col_idx):
+		ret_type = 'text'
+		if 'rows' not in table.keys():
+			if 'types' in table.keys():
+				ret_type = table['types'][col_idx]
+		else:
+			na_set = {'None', 'none', 'N/A', '', 'nan', '-', '/', 'NAN'}
+			col_data = list(filter(lambda x: x not in na_set, [r[col_idx] for r in table['rows']]))
+			if col_data:
+				isreal = True
+				try:
+					_ = list(map(float, col_data))
+				except:
+					isreal = False
+				if isreal:
+					ret_type = 'real'
+				if ('ISBN' in table['header'][col_idx]) or ('号' in table['header'][col_idx]) or ('ID' in table['header'][col_idx]):
+					ret_type = 'text'
+				if ret_type != table['types'][col_idx]:
+					print(table['header'][col_idx], col_data)
+
+		return ret_type
+
+	if 'types' not in table.keys():
+		table['types'] = ['text'] * len(table['header'])
+	for i in range(len(table['header'])):
+		table['types'][i] = get_real_col_type(i)
+	return table
+
 
 def load_data(sql_paths, table_paths, use_small=False):
 	if not isinstance(sql_paths, list):
@@ -176,6 +206,7 @@ def load_data(sql_paths, table_paths, use_small=False):
 		with open(TABLE_PATH, encoding='utf-8') as inf:
 			for line in inf:
 				tab = json.loads(line.strip())
+				tab = justify_col_type(tab)
 				table_data[tab[u'id']] = tab
 		print("Loaded %d data from %s" % (len(table_data), TABLE_PATH))
 
