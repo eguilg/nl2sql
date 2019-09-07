@@ -749,7 +749,7 @@ def gen_batch_error_cases(error_idxs, q_seq, query_gt, pred_queries_post, pred_q
 	return error_cases, gt_cases
 
 
-def save_error_case(error_case, gt_cases, dir='./nl2sql/log/'):
+def save_error_case(error_case, gt_cases, dir='./log/'):
 	import os.path as osp
 	error_fn = osp.join(dir, 'error_cases.json')
 	gt_fn = osp.join(dir, 'gt_cases.json')
