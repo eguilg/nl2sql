@@ -7,6 +7,7 @@ from pytorch_pretrained_bert.modeling import BertPreTrainedModel, BertEncoder, B
 from pytorch_pretrained_bert import BertTokenizer, BertModel, BertAdam, BertConfig
 import re
 from sqlnet.strPreprocess import *
+from collections import Counter
 
 class SQLBert(BertPreTrainedModel):
 	def __init__(self, config, hidden=150, gpu=True, dropout_prob=0.2, bert_cache_dir=None):
@@ -328,27 +329,186 @@ class SQLBert(BertPreTrainedModel):
 
 				cur_query['conds'].append([true_col_idx, cond_cand[1], cond_str])
 
-			# for idx in where_idx_sorted:
-			# 	if len(cur_query['conds']) >= where_num:
-			# 		break
-			# 	w_col_idx, op = where_x_op_value[idx]
-			#
-			# 	true_col_idx = w_col_idx // 2  # 每列预测两个条件
-			#
-			# 	if true_col_idx < len(col[b]):
-			# 		where_col_type = types[true_col_idx]
-			# 		if beam and (op not in valid_w_op[where_col_type]):
-			# 			continue
-			# 		cond_start = where_start_pred[b][w_col_idx]
-			# 		cond_end = where_end_pred[b][w_col_idx]
-			# 		cons_toks = q[b][cond_start:cond_end + 1]
-			# 		cond_str = merge_tokens(cons_toks, raw_q[b])
-			#
-			# 		cur_query['conds'].append([true_col_idx, op, cond_str])
 
 			ret_queries.append(cur_query)
 		return ret_queries
 
+	def gen_ensemble(self, scores, q, col, sql_data, table_data, perm, st, ed):
+		valid_s_agg = {
+			"real": frozenset([0, 1, 2, 3, 4, 5]),
+			"text": frozenset([0, 4])
+		}
+		valid_w_op = {
+			"real": frozenset([0, 1, 2, 3]),
+			"text": frozenset([2, 3])
+		}
+
+		where_conn_score, \
+		sel_num_score, where_num_score, sel_col_score, \
+		sel_agg_score, where_col_score, where_op_score, \
+		where_start_score, where_end_score = scores
+
+		where_conn_score = where_conn_score.data.cpu()
+		sel_num_score = sel_num_score.data.cpu()
+		where_num_score = where_num_score.data.cpu()
+		sel_col_score = sel_col_score.data.cpu()
+		sel_agg_score = sel_agg_score.data.cpu()
+		where_col_score = where_col_score.data.cpu()
+		where_op_score = where_op_score.data.cpu()
+		where_start_score = where_start_score.data.cpu()
+		where_end_score = where_end_score.data.cpu()
+
+		B = sel_num_score.shape[0]
+
+		col_vtypes = [table_data[sql_data[idx]['table_id']]['types'] for idx in perm[st:ed]]
+		raw_q = [sql_data[idx]['question'] for idx in perm[st:ed]]
+		table_headers = [table_data[sql_data[idx]['table_id']]['header'] for idx in perm[st:ed]]
+
+		where_vals = []
+
+		where_start_maxscore, where_start_pred = where_start_score.max(1)
+		where_end_maxscore, where_end_pred = where_end_score.max(1)
+
+		where_start_maxscore = where_start_maxscore.data.cpu().numpy()
+		where_end_maxscore = where_end_maxscore.data.cpu().numpy()
+		where_start_pred = where_start_pred.data.cpu().numpy()
+		where_end_pred = where_end_pred.data.cpu().numpy()
+		for b in range(B):
+			cur_col_vals = []
+			for idx in range(where_start_pred.shape[1]):
+				cur_vals = Counter()
+				start = where_start_pred[b][idx]
+				end = where_end_pred[b][idx]
+				cond_score = where_start_maxscore[b][idx] * where_end_maxscore[b][idx]
+				true_col_idx = idx // 2
+				if true_col_idx >= len(table_headers[b]):
+					continue
+				cons_toks = q[b][start:end + 1]
+
+				cond_str = merge_tokens(cons_toks, raw_q[b])
+				check = cond_str
+				'''type = real 预测的cond_str单位进行转换'''
+
+				if col_vtypes[b][true_col_idx] == 'real':
+
+					col_header = table_headers[b][true_col_idx]
+					# print('----real----', cond_str, col_header)
+					units = re.findall(r'[(（/-](.*)', str(col_header))
+					# unit_keys = re.findall(r'万|百万|千万|亿', str(col_header))
+					if units:
+						unit = units[0]
+						unit_keys = re.findall(r'百万|千万|万|百亿|千亿|万亿|亿', unit)
+						# unit_keys = re.findall(r'[百千万亿]{1,}', unit)
+						if unit_keys:
+							unit_key = unit_keys[0]
+							u_v, r = chinese_to_digits(unit_key)
+
+							if re.findall(unit_key, cond_str):
+								cond_str = re.sub(unit_key, '', cond_str)
+							elif re.findall(r'百万|千万|万|百亿|千亿|万亿|亿', cond_str):
+								try:
+									cond_v = unit_convert(cond_str)
+									cond_str = float(cond_v) / r
+								except Exception as exc:
+									print('gen_query_convert', exc, cond_str, r, unit_key)
+
+
+						elif re.findall(r'元|米|平|套|枚|册|张|辆|个|股|户|m²|亩|人', unit):
+							try:
+								cond_str = unit_convert(cond_str)
+							except Exception as exc:
+								print('gen_query_convert', exc)
+						else:
+							cond_str = re.sub(r'[百千万亿]{1,}', '', str(cond_str))
+
+						cond_str = re.sub(r'[^0123456789.-]', '', str(cond_str))
+					else:
+						cond_str = re.sub(r'[百千万亿]{1,}', '', cond_str)
+						cond_str = re.sub(r'[^0123456789.-]', '', cond_str)
+				# print('----real----', cond_str,'***', check, col_header)
+				# if not cond_str:
+				# 	cond_str = ''
+				cur_vals[cond_str] = cond_score
+				cur_col_vals.append(cur_vals)
+			where_vals.append(cur_col_vals)
+		return [where_conn_score, sel_num_score, where_num_score, sel_col_score,
+				sel_agg_score, where_col_score, where_op_score, where_vals]
+
+
+def gen_ensemble_query(batch_score, sql_data, table_data, perm, st, ed, beam=True, k=10):
+	valid_s_agg = {
+		"real": frozenset([0, 1, 2, 3, 4, 5]),
+		"text": frozenset([0, 4])
+	}
+	valid_w_op = {
+		"real": frozenset([0, 1, 2, 3]),
+		"text": frozenset([2, 3])
+	}
+
+	where_conn_score, \
+	sel_num_score, where_num_score, sel_col_score, \
+	sel_agg_score, where_col_score, where_op_score, \
+	where_vals = batch_score
+
+	ret_queries = []
+	B = sel_num_score.shape[0]
+	col_vtypes = [table_data[sql_data[idx]['table_id']]['types'] for idx in perm[st:ed]]
+	table_headers = [table_data[sql_data[idx]['table_id']]['header'] for idx in perm[st:ed]]
+	where_conn_pred = where_conn_score.argmax(-1).data.cpu().numpy().tolist()
+
+	## filtering sel col and agg
+	sel_x_agg_score = (sel_col_score[:, :, None] * sel_agg_score).view(B, -1)
+	sel_x_agg_value = np.array(
+		[[c_idx, agg] for c_idx in range(0, sel_col_score.shape[1]) for agg in range(0, 6)]).tolist()
+	sel_x_agg_idx = sel_x_agg_score.argsort(dim=-1, descending=True).data.cpu().numpy().tolist()
+	sel_num_pred = sel_num_score.argmax(-1).data.cpu().numpy().tolist()
+	where_x_op_score = (where_col_score[:, :, None] * where_op_score).view(B, -1)
+	where_x_op_value = np.array(
+		[[c_idx, op] for c_idx in range(0, where_col_score.shape[1]) for op in range(0, 4)]).tolist()
+	where_x_op_idx = where_x_op_score.argsort(dim=-1, descending=True).data.cpu().numpy().tolist()
+	where_num_pred = where_num_score.argmax(-1).data.cpu().numpy().tolist()
+
+	for b in range(B):
+		cur_query = {}
+		types = col_vtypes[b]
+
+		sel_num = max(1, sel_num_pred[b])
+		sel_idx_sorted = sel_x_agg_idx[b]
+
+		cur_query['agg'] = []
+		cur_query['cond_conn_op'] = where_conn_pred[b]
+		cur_query['sel'] = []
+		for idx in sel_idx_sorted:
+			if len(cur_query['sel']) == sel_num:
+				break
+			sel_col_idx, agg = sel_x_agg_value[idx]
+			if sel_col_idx < len(table_headers[b]):
+				sel_col_type = types[sel_col_idx]
+				if beam and (agg not in valid_s_agg[sel_col_type]):
+					continue
+				cur_query['agg'].append(agg)
+				cur_query['sel'].append(sel_col_idx)
+
+		where_num = max(1, where_num_pred[b])
+		where_idx_sorted = where_x_op_idx[b]
+		cur_query['conds'] = []
+
+		for idx in where_idx_sorted:
+			if len(cur_query['conds']) >= where_num:
+				break
+			w_col_idx, op = where_x_op_value[idx]
+			true_col_idx = w_col_idx // 2  # 每列预测两个条件
+			if true_col_idx < len(table_headers[b]):
+				where_col_type = types[true_col_idx]
+				# if beam and (op not in valid_w_op[where_col_type]):
+				# 	continue
+				vals = list(sorted(list(where_vals[b][w_col_idx].items()), key=lambda x: x[1], reverse=True))
+				cond_str = vals[0][0]
+
+				cur_query['conds'].append([true_col_idx, op, cond_str])
+		cur_query['conds'].sort(key=lambda x: x[0])
+		ret_queries.append(cur_query)
+	return ret_queries
 
 """
 得到where之间关系的分类logit
@@ -464,6 +624,8 @@ def _get_logits(cls_emb, q_seq, sel_col_seq, where_col_seq, max_col_num):
 
 
 def merge_tokens(tok_list, raw_tok_str):
+	if not tok_list:
+		return ''
 	tok_str = raw_tok_str  # .lower()
 	alphabet = 'abcdefghijklmnopqrstuvwxyz0123456789$('
 	special = {'-LRB-': '(',

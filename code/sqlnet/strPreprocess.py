@@ -235,7 +235,8 @@ def strPreProcess(question):
             value = value.replace('1线', '一线')
 
     except Exception as exc:
-        print('strPreProcess_error', exc,'--',value)
+        # print('strPreProcess_error', exc,'--',value)
+        pass
 
     return value
 

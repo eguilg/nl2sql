@@ -2,7 +2,7 @@ import json
 from sqlnet.lib.dbengine import DBEngine
 import numpy as np
 from tqdm import tqdm
-from sqlnet.model.sqlbert import SQLBert
+from sqlnet.model.sqlbert import SQLBert, gen_ensemble_query
 import torch
 from sqlnet.strPreprocess import *
 from fuzzywuzzy import process
@@ -110,7 +110,7 @@ def pos_in_tokens(target_str, tokens, type = None, header = None):
 	# 	target_str = copy_target_str
 
 	if list(candidates.keys()) is None or len(list(candidates.keys())) == 0:
-		print('-----testnone----',target_str, tokens,ngrams)
+		# print('-----testnone----',target_str, tokens,ngrams)
 		return -1, -1
 
 	target_str = str(target_str).replace('-', '')
@@ -628,7 +628,147 @@ def epoch_acc(model, batch_size, sql_data, table_data, db_path, tokenizer=None):
 		pred_queries_post = copy.deepcopy(pred_queries)
 		pred_queries_post = post_process(pred_queries_post, sql_data, table_data, perm, st, ed)
 		one_err, tot_err, error_idxs = check_acc(raw_data, pred_queries_post, query_gt)
-		error_cases, gt_cases = gen_batch_error_cases(error_idxs, q_seq, query_gt, pred_queries_post, pred_queries, raw_data)
+		error_cases, gt_cases = gen_batch_error_cases(error_idxs, query_gt, pred_queries_post, pred_queries, raw_data)
+		total_error_cases.extend(error_cases)
+		total_gt_cases.extend(gt_cases)
+
+		# except:
+		# 	badcase += 1
+		# 	print('badcase', badcase)
+		# 	continue
+		one_acc_num += (ed - st - one_err)
+		tot_acc_num += (ed - st - tot_err)
+
+		# Execution Accuracy
+		for sql_gt, sql_pred, tid in zip(query_gt, pred_queries_post, table_ids):
+			ret_gt = engine.execute(tid, sql_gt['sel'], sql_gt['agg'], sql_gt['conds'], sql_gt['cond_conn_op'])
+			try:
+				ret_pred = engine.execute(tid, sql_pred['sel'], sql_pred['agg'], sql_pred['conds'],
+										  sql_pred['cond_conn_op'])
+			except:
+				ret_pred = None
+			ex_acc_num += (ret_gt == ret_pred)
+	save_error_case(total_error_cases, total_gt_cases)
+	return one_acc_num / len(sql_data), tot_acc_num / len(sql_data), ex_acc_num / len(sql_data)
+
+
+def epoch_ensemble(model, batch_scores, batch_size, sql_data, table_data, tokenizer=None):
+	model.eval()
+	perm = list(range(len(sql_data)))
+
+	if not batch_scores:
+		gen_new = True
+		batch_scores = []
+	else:
+		gen_new = False
+
+	for st in tqdm(range(len(sql_data) // batch_size + 1)):
+		if st * batch_size == len(perm):
+			break
+		ed = (st + 1) * batch_size if (st + 1) * batch_size < len(perm) else len(perm)
+		batch_id = st
+		st = st * batch_size
+
+		q_seq, gt_sel_num, col_seq, col_num, ans_seq, gt_cond_seq, header_type, raw_data = \
+			to_batch_seq(sql_data, table_data, perm, st, ed, tokenizer=tokenizer, ret_vis_data=True)
+
+		with torch.no_grad():
+
+			bert_inputs, q_lens, sel_col_nums, where_col_nums = gen_batch_bert_seq(tokenizer, q_seq, col_seq,
+																				   header_type)
+			score = model.forward(bert_inputs, return_logits=False)
+
+			score = model.gen_ensemble(score, q_seq, col_seq, sql_data, table_data, perm, st, ed)
+		if not gen_new:
+			for i in range(7):
+				batch_scores[batch_id][i] += score[i]
+			for item in range(len(score[7])):
+				for col in range(len(score[7][item])):
+					batch_scores[batch_id][7][item][col] += score[7][item][col]
+		else:
+			batch_scores.append(score)
+	return batch_scores
+
+def epoch_ensemble_test(model, batch_scores, batch_size, sql_data, table_data, tokenizer=None):
+	model.eval()
+	perm = list(range(len(sql_data)))
+
+	if not batch_scores:
+		gen_new = True
+		batch_scores = []
+	else:
+		gen_new = False
+
+	for st in tqdm(range(len(sql_data) // batch_size + 1)):
+		if st * batch_size == len(perm):
+			break
+		ed = (st + 1) * batch_size if (st + 1) * batch_size < len(perm) else len(perm)
+		batch_id = st
+		st = st * batch_size
+
+		q_seq, col_seq, col_num, raw_q_seq, table_ids, header_type = to_batch_seq_test(sql_data, table_data,
+																					   perm, st, ed,
+																					   tokenizer=tokenizer)
+
+		with torch.no_grad():
+
+			bert_inputs, q_lens, sel_col_nums, where_col_nums = gen_batch_bert_seq(tokenizer, q_seq, col_seq,
+																				   header_type)
+			score = model.forward(bert_inputs, return_logits=False)
+
+			score = model.gen_ensemble(score, q_seq, col_seq, sql_data, table_data, perm, st, ed)
+		if not gen_new:
+			for i in range(7):
+				batch_scores[batch_id][i] += score[i]
+			for item in range(len(score[7])):
+				for col in range(len(score[7][item])):
+					batch_scores[batch_id][7][item][col] += score[7][item][col]
+		else:
+			batch_scores.append(score)
+	return batch_scores
+
+def ensemble_predict(batch_scores, batch_size, sql_data, table_data, output_path):
+	perm = list(range(len(sql_data)))
+	fw = open(output_path, 'w', encoding='utf-8')
+	for st in tqdm(range(len(sql_data) // batch_size + 1)):
+		if st * batch_size == len(perm):
+			break
+		ed = (st + 1) * batch_size if (st + 1) * batch_size < len(perm) else len(perm)
+		batch_idx = st
+		st = st * batch_size
+
+		score = batch_scores[batch_idx]
+		sql_preds = gen_ensemble_query(score, sql_data, table_data, perm, st, ed)
+		sql_preds = post_process(sql_preds, sql_data, table_data, perm, st, ed)
+		for sql_pred in sql_preds:
+			sql_pred = eval(str(sql_pred))
+			fw.writelines(json.dumps(sql_pred, ensure_ascii=False) + '\n')
+		# fw.writelines(json.dumps(sql_pred,ensure_ascii=False).encode('utf-8')+'\n')
+	fw.close()
+
+
+def ensemble_acc(batch_scores, batch_size, sql_data, table_data, db_path):
+	engine = DBEngine(db_path)
+	perm = list(range(len(sql_data)))
+	badcase = 0
+	one_acc_num, tot_acc_num, ex_acc_num = 0.0, 0.0, 0.0
+	total_error_cases = []
+	total_gt_cases = []
+	for st in tqdm(range(len(sql_data) // batch_size + 1)):
+		if st * batch_size == len(perm):
+			break
+		ed = (st + 1) * batch_size if (st + 1) * batch_size < len(perm) else len(perm)
+		batch_idx = st
+		st = st * batch_size
+		query_gt, table_ids = to_batch_query(sql_data, perm, st, ed)
+		raw_data = [(sql_data[i]['question'], table_data[sql_data[i]['table_id']]['header']) for i in perm[st: ed]]
+		score = batch_scores[batch_idx]
+		pred_queries = gen_ensemble_query(score, sql_data, table_data, perm, st, ed)
+
+		pred_queries_post = copy.deepcopy(pred_queries)
+		pred_queries_post = post_process(pred_queries_post, sql_data, table_data, perm, st, ed)
+		one_err, tot_err, error_idxs = check_acc(None, pred_queries_post, query_gt)
+		error_cases, gt_cases = gen_batch_error_cases(error_idxs, query_gt, pred_queries_post, pred_queries, raw_data)
 		total_error_cases.extend(error_cases)
 		total_gt_cases.extend(gt_cases)
 
@@ -723,8 +863,8 @@ def check_acc(vis_info, pred_queries, gt_queries):
 			good = False
 			agg_err += 1
 
-		cond_pred = pred_qry['conds']
-		cond_gt = gt_qry['conds']
+		cond_pred = list(sorted(pred_qry['conds'], key=lambda x: (x[0], x[1], x[2])))
+		cond_gt = list(sorted(gt_qry['conds'], key=lambda x: (x[0], x[1], x[2])))
 		if len(cond_pred) != len(cond_gt):
 			good = False
 			cond_num_err += 1
@@ -760,7 +900,7 @@ def check_acc(vis_info, pred_queries, gt_queries):
 		(sel_num_err, sel_err, agg_err, cond_num_err, cond_col_err, cond_op_err, cond_val_err, cond_rela_err)), tot_err, bad_sample_idxs
 
 
-def gen_batch_error_cases(error_idxs, q_seq, query_gt, pred_queries_post, pred_queries, raw_data):
+def gen_batch_error_cases(error_idxs, query_gt, pred_queries_post, pred_queries, raw_data):
 	error_cases = []
 	gt_cases = []
 	for idx in error_idxs:
