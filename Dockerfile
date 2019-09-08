@@ -14,8 +14,8 @@ WORKDIR /competition
 
 #RUN rm -rf /var/lib/apt/lists/*
 #RUN apt-get clean
-RUN apt-get update
-RUN apt-get install gcc -y
+#RUN apt-get update
+#RUN apt-get install gcc -y
 RUN pip --no-cache-dir install  -r ./requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 #RUN chmod -R +w /competition
 CMD ["sh", "run.sh"]

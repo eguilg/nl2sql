@@ -11,17 +11,17 @@ import argparse
 if __name__ == '__main__':
 	parser = argparse.ArgumentParser()
 	parser.add_argument('--gpu', action='store_true', help='Whether use gpu')
-	parser.add_argument('--batch_size', type=int, default=12, help='Batch size')
+	parser.add_argument('--batch_size', type=int, default=8, help='Batch size')
 	parser.add_argument('--lr', type=float, default=6e-6, help='base learning rate')
 	parser.add_argument('--epoch', type=int, default=100, help='Epoch number')
 	parser.add_argument('--toy', action='store_true', help='If set, use small data for fast debugging')
 
-	parser.add_argument('--data_dir', type=str, default='../data/')
-	parser.add_argument('--bert_model_dir', type=str, default='../model/chinese-bert_chinese_wwm_pytorch/')
-	parser.add_argument('--model_save_path', type=str, default='../model/best_bert_model')
+	parser.add_argument('--data_dir', type=str, default='./data/')
+	parser.add_argument('--bert_model_dir', type=str, default='./model/chinese-bert_chinese_wwm_pytorch/')
+	parser.add_argument('--model_save_path', type=str, default='./model/best_bert_model')
 
 	parser.add_argument('--restore', action='store_true', help='Whether restore trained model')
-	parser.add_argument('--restore_model_path', type=str, default='../model/best_bert_model')
+	parser.add_argument('--restore_model_path', type=str, default='./model/best_bert_model')
 
 	args = parser.parse_args()
 
