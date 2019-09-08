@@ -271,8 +271,8 @@ class SQLBert(BertPreTrainedModel):
 				true_col_idx = w_col_idx // 2  # 每列预测两个条件
 				if true_col_idx < len(col[b]):
 					where_col_type = types[true_col_idx]
-					if beam and (op not in valid_w_op[where_col_type]):
-						continue
+					# if beam and (op not in valid_w_op[where_col_type]):
+					# 	continue
 					cond_start = where_start_pred[b][w_col_idx]
 					cond_end = where_end_pred[b][w_col_idx]
 					cond_candis.append([w_col_idx, op, cond_start, cond_end])
