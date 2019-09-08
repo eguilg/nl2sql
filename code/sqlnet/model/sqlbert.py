@@ -309,14 +309,16 @@ class SQLBert(BertPreTrainedModel):
 									cond_v = unit_convert(cond_str)
 									cond_str = float(cond_v) / r
 								except Exception as exc:
-									print('gen_query_convert', exc, cond_str, r, unit_key)
+									# print('gen_query_convert', exc, cond_str, r, unit_key)
+									pass
 
 
 						elif re.findall(r'元|米|平|套|枚|册|张|辆|个|股|户|m²|亩|人', unit):
 							try:
 								cond_str = unit_convert(cond_str)
 							except Exception as exc:
-								print('gen_query_convert', exc)
+								# print('gen_query_convert', exc)
+								pass
 						else:
 							cond_str = re.sub(r'[百千万亿]{1,}','', str(cond_str))
 
@@ -410,14 +412,15 @@ class SQLBert(BertPreTrainedModel):
 									cond_v = unit_convert(cond_str)
 									cond_str = float(cond_v) / r
 								except Exception as exc:
-									print('gen_query_convert', exc, cond_str, r, unit_key)
-
+									# print('gen_query_convert', exc, cond_str, r, unit_key)
+									pass
 
 						elif re.findall(r'元|米|平|套|枚|册|张|辆|个|股|户|m²|亩|人', unit):
 							try:
 								cond_str = unit_convert(cond_str)
 							except Exception as exc:
-								print('gen_query_convert', exc)
+								# print('gen_query_convert', exc)
+								pass
 						else:
 							cond_str = re.sub(r'[百千万亿]{1,}', '', str(cond_str))
 
