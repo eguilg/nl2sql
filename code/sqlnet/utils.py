@@ -163,8 +163,8 @@ def justify_col_type(table):
 					ret_type = 'real'
 				if ('ISBN' in table['header'][col_idx]) or ('号' in table['header'][col_idx]) or ('ID' in table['header'][col_idx]):
 					ret_type = 'text'
-				if ret_type != table['types'][col_idx]:
-					print(table['header'][col_idx], col_data)
+				# if ret_type != table['types'][col_idx]:
+				# 	print(table['header'][col_idx], col_data)
 
 		return ret_type
 
@@ -602,6 +602,8 @@ def epoch_acc(model, batch_size, sql_data, table_data, db_path, tokenizer=None):
 	total_error_cases = []
 	total_gt_cases = []
 	for st in tqdm(range(len(sql_data) // batch_size + 1)):
+		if st * batch_size == len(perm):
+			break
 		ed = (st + 1) * batch_size if (st + 1) * batch_size < len(perm) else len(perm)
 		st = st * batch_size
 
