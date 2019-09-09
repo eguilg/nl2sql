@@ -1,5 +1,5 @@
 ## [阿里天池首届中文NL2SQL挑战赛](https://tianchi.aliyun.com/competition/entrance/231716/introduction) 
-排名: 8
+排名: 6
 
 队名: 爆写规则一万行
 
